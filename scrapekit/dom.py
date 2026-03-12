@@ -99,7 +99,7 @@ def parse(html: str) -> Node:
 # ---------------------------------------------------------------- selectors
 
 _TOKEN = re.compile(r"""
-    (?P<ws>\s*>\s*|\s+)                                  # combinator
+    (?P<ws>\s*[>,]\s*|\s+)                               # combinator or group comma
   | (?P<tag>\*|[a-zA-Z][\w-]*)
   | \#(?P<id>[\w-]+)
   | \.(?P<cls>[\w-]+)
@@ -109,12 +109,21 @@ _TOKEN = re.compile(r"""
 
 
 def _compile(sel: str):
-    """Compile one selector (no commas) to a list of (combinator, [predicates])."""
+    """Compile a selector list to groups, each a list of (combinator, [predicates])."""
+    groups: list[list[tuple[str, list]]] = []
     steps: list[tuple[str, list]] = []
     preds: list = []
     comb = " "
     pos = 0
     sel = sel.strip()
+
+    def end_group():
+        if not preds and not steps:
+            raise ValueError(f"empty selector in group list: {sel!r}")
+        steps.append((comb, preds or [lambda n: True]))
+        groups.append(list(steps))
+        steps.clear()
+
     while pos < len(sel):
         m = _TOKEN.match(sel, pos)
         if not m:
@@ -122,10 +131,17 @@ def _compile(sel: str):
         pos = m.end()
         g = m.groupdict()
         if g["ws"] is not None:
+            c = g["ws"].strip() or " "
+            if c == ",":
+                end_group()
+                preds, comb = [], " "
+                continue
             if preds:
                 steps.append((comb, preds))
                 preds = []
-            comb = ">" if ">" in g["ws"] else " "
+            elif steps:
+                raise ValueError(f"dangling combinator in {sel!r}")
+            comb = c
         elif g["tag"]:
             t = g["tag"].lower()
             if t != "*":
@@ -138,10 +154,8 @@ def _compile(sel: str):
             preds.append(_attr_pred(g["attr"].lower(), g["op"], g["val"]))
         elif g["pseudo"]:
             preds.append(_pseudo_pred(g["pseudo"], g["arg"]))
-    if not preds:
-        preds.append(lambda n: True)
-    steps.append((comb, preds))
-    return steps
+    end_group()
+    return groups
 
 
 def _attr_pred(name, op, val):
@@ -190,7 +204,6 @@ def _matches(node: Node, steps, i: int) -> bool:
 
 def select(root: Node, selector: str) -> list[Node]:
     """All descendants of root matching selector, in document order."""
-    # ponytail: naive comma split; breaks on commas inside [attr="a,b"]. Tokenize groups if needed.
-    groups = [_compile(s) for s in selector.split(",") if s.strip()]
+    groups = _compile(selector)
     return [n for n in root.iter()
             if any(_matches(n, steps, len(steps) - 1) for steps in groups)]
