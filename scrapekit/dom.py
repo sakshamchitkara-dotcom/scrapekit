@@ -3,7 +3,7 @@
 Supported selectors:
   tag, *, #id, .class, [attr], [attr=v], [attr^=v], [attr$=v], [attr*=v],
   [attr~=v], :first-child, :last-child, :nth-child(n), descendant (space),
-  child (>), and groups (a, b).
+  child (>), adjacent sibling (+), general sibling (~), and groups (a, b).
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def parse(html: str) -> Node:
 # ---------------------------------------------------------------- selectors
 
 _TOKEN = re.compile(r"""
-    (?P<ws>\s*[>,]\s*|\s+)                               # combinator or group comma
+    (?P<ws>\s*[>+~,]\s*|\s+)                             # combinator or group comma
   | (?P<tag>\*|[a-zA-Z][\w-]*)
   | \#(?P<id>[\w-]+)
   | \.(?P<cls>[\w-]+)
@@ -185,15 +185,27 @@ def _pseudo_pred(name, arg):
     return lambda n: index(n)[0] == k - 1
 
 
+def _prev_siblings(node: Node) -> list[Node]:
+    """Element siblings before node, nearest first."""
+    if node.parent is None:
+        return []
+    sibs = node.parent.elements
+    return sibs[: sibs.index(node)][::-1]
+
+
 def _matches(node: Node, steps, i: int) -> bool:
     comb, preds = steps[i]
     if not all(p(node) for p in preds):
         return False
     if i == 0:
         return True
-    prev_comb = comb
+    if comb == "+":
+        prev = _prev_siblings(node)[:1]
+        return bool(prev) and _matches(prev[0], steps, i - 1)
+    if comb == "~":
+        return any(_matches(s, steps, i - 1) for s in _prev_siblings(node))
     anc = node.parent
-    if prev_comb == ">":
+    if comb == ">":
         return anc is not None and anc.tag != "#document" and _matches(anc, steps, i - 1)
     while anc is not None and anc.tag != "#document":
         if _matches(anc, steps, i - 1):
