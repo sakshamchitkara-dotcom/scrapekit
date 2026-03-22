@@ -2,7 +2,7 @@
 
 Supported selectors:
   tag, *, #id, .class, [attr], [attr=v], [attr^=v], [attr$=v], [attr*=v],
-  [attr~=v], :first-child, :last-child, :nth-child(n), descendant (space),
+  [attr~=v], :first-child, :last-child, :nth-child(an+b|odd|even), descendant (space),
   child (>), adjacent sibling (+), general sibling (~), and groups (a, b).
 """
 from __future__ import annotations
@@ -104,8 +104,27 @@ _TOKEN = re.compile(r"""
   | \#(?P<id>[\w-]+)
   | \.(?P<cls>[\w-]+)
   | \[\s*(?P<attr>[\w:-]+)\s*(?:(?P<op>[~^$*]?=)\s*(?P<val>"[^"]*"|'[^']*'|[^\]\s]+)\s*)?\]
-  | :(?P<pseudo>first-child|last-child|nth-child)(?:\(\s*(?P<arg>\d+)\s*\))?
+  | :(?P<pseudo>[a-z-]+)(?P<paren>\()?
 """, re.X)
+_NTH = re.compile(r"^(?:(?P<a>[+-]?\d*)n\s*(?:(?P<sign>[+-])\s*(?P<b>\d+))?|(?P<k>[+-]?\d+))$")
+
+
+def _close_paren(sel: str, pos: int) -> int:
+    """Index of the ')' closing the '(' just before pos, skipping quoted strings."""
+    depth, quote = 1, None
+    for i in range(pos, len(sel)):
+        c = sel[i]
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "\"'":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    raise ValueError(f"unbalanced parenthesis in {sel!r}")
 
 
 def _compile(sel: str):
@@ -153,7 +172,11 @@ def _compile(sel: str):
         elif g["attr"]:
             preds.append(_attr_pred(g["attr"].lower(), g["op"], g["val"]))
         elif g["pseudo"]:
-            preds.append(_pseudo_pred(g["pseudo"], g["arg"]))
+            arg = None
+            if g["paren"]:
+                close = _close_paren(sel, pos)
+                arg, pos = sel[pos:close].strip(), close + 1
+            preds.append(_pseudo_pred(g["pseudo"], arg))
     end_group()
     return groups
 
@@ -173,16 +196,34 @@ def _attr_pred(name, op, val):
     return lambda n: name in n.attrs and test(n.attrs[name])
 
 
+def _nth(arg: str):
+    """Parse an :nth-child() argument (an+b, odd, even, k) into a 1-based index test."""
+    arg = {"odd": "2n+1", "even": "2n"}.get(arg.lower(), arg.lower())
+    m = _NTH.match(arg.replace(" ", "")) if arg else None
+    if not m:
+        raise ValueError(f"bad :nth-child() argument {arg!r}")
+    if m["k"] is not None:
+        a, b = 0, int(m["k"])
+    else:
+        a = int(m["a"] + "1" if m["a"] in ("", "+", "-") else m["a"])
+        b = int(m["sign"] + m["b"]) if m["b"] else 0
+    if a == 0:
+        return lambda i: i == b
+    return lambda i: (i - b) % a == 0 and (i - b) // a >= 0
+
+
 def _pseudo_pred(name, arg):
     def index(n):
         sibs = n.parent.elements if n.parent else [n]
         return sibs.index(n), len(sibs)
-    if name == "first-child":
+    if name == "first-child" and arg is None:
         return lambda n: index(n)[0] == 0
-    if name == "last-child":
+    if name == "last-child" and arg is None:
         return lambda n: index(n)[0] == index(n)[1] - 1
-    k = int(arg or 1)
-    return lambda n: index(n)[0] == k - 1
+    if name == "nth-child" and arg is not None:
+        test = _nth(arg)
+        return lambda n: test(index(n)[0] + 1)
+    raise ValueError(f"unsupported pseudo-class :{name}" + (f"({arg})" if arg is not None else ""))
 
 
 def _prev_siblings(node: Node) -> list[Node]:

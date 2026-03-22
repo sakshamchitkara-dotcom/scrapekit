@@ -61,6 +61,15 @@ class TestDom(unittest.TestCase):
         self.assertEqual(self.sel("li:first-child"), ["one"])
         self.assertEqual(self.sel("li:last-child"), ["three"])
         self.assertEqual(self.sel("li:nth-child(2)"), ["two"])
+        self.assertEqual(self.sel("li:nth-child(odd)"), ["one", "three"])
+        self.assertEqual(self.sel("li:nth-child(even)"), ["two"])
+        self.assertEqual(self.sel("li:nth-child(2n+1)"), ["one", "three"])
+        self.assertEqual(self.sel("li:nth-child(n+2)"), ["two", "three"])
+        self.assertEqual(self.sel("li:nth-child(-n+2)"), ["one", "two"])
+        self.assertEqual(self.sel("li:nth-child( 3n - 1 )"), ["two"])
+        for bad in ("li:nth-child(x)", "li:nth-child()", "li:hover", "li:first-child(1)", "li:nth-child(2"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.doc.select(bad)
 
     def test_script_not_parsed_or_texted(self):
         self.assertEqual(len(self.doc.select("a")), 2)
