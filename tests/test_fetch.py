@@ -44,6 +44,22 @@ class TestFetch(unittest.TestCase):
                 f.fetch(srv.url)
             self.assertGreaterEqual(time.monotonic() - t, 0.4)
 
+    def test_robots_5xx_disallows_whole_origin(self):
+        for code in (500, 503):
+            with FixtureServer() as srv:
+                srv.robots_status = code
+                f = Fetcher(delay=0, retries=0)
+                self.assertFalse(f.allowed(srv.url))
+                with self.assertRaises(RobotsDisallowed):
+                    f.fetch(srv.url + "about.html")
+                self.assertEqual(srv.paths(), ["/robots.txt"])  # nothing else requested
+
+    def test_robots_404_allows_all(self):
+        with FixtureServer() as srv:
+            srv.robots_status = 404
+            f = Fetcher(delay=0, retries=0)
+            self.assertEqual(f.fetch(srv.url + "private/secret.html").status, 200)
+
     def test_unreachable_host_disallowed_conservatively(self):
         f = Fetcher(delay=0, retries=0, timeout=1)
         self.assertFalse(f.allowed("http://127.0.0.1:9/x"))
