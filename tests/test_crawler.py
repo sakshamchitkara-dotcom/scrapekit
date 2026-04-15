@@ -2,7 +2,8 @@ import os
 import tempfile
 import unittest
 
-from scrapekit.crawler import CrawlConfig, Crawler
+from scrapekit.crawler import CrawlConfig, Crawler, discover_sitemap
+from scrapekit.fetch import Fetcher
 from scrapekit.extract import Recipe
 from scrapekit.store import Store
 from tests.server import FixtureServer
@@ -42,6 +43,18 @@ class CrawlTest(unittest.TestCase):
         states = dict(self.store.db.execute(
             "SELECT url, state FROM frontier WHERE run_id=?", (run,)).fetchall())
         self.assertEqual(states[srv.url + "private/secret.html"], "skipped")
+
+    def test_sitemap_seeds(self):
+        with FixtureServer() as srv:
+            urls = discover_sitemap(Fetcher(delay=0, retries=0), srv.url, 50)
+            self.assertEqual(urls, [srv.url + "about.html", srv.url + "products/deep/level3.html",
+                                    "https://example.org/off-site.html", srv.url + "orphan.html"])
+            self.assertIn("/missing-sitemap.xml", srv.paths())  # 404 tolerated
+            run = self.crawl(srv, max_depth=0, sitemap=True)
+        done = {u for u, in self.store.db.execute(
+            "SELECT url FROM frontier WHERE run_id=? AND state='done'", (run,))}
+        self.assertEqual(done, {srv.url, srv.url + "orphan.html", srv.url + "about.html",
+                                srv.url + "products/deep/level3.html"})  # off-site dropped
 
     def test_max_pages(self):
         with FixtureServer() as srv:
