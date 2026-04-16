@@ -100,6 +100,72 @@ def generic(html: str, url: str) -> dict:
 _PSEUDO = re.compile(r"::(text|attr\(([\w:-]+)\))\s*$")
 _TYPES = {"str": str, "int": int, "float": float}
 
+# ------------------------------------------------------- field processing
+# Each step takes a string and returns the new value, or None to drop it.
+
+_NUM = re.compile(r"[-+]?\d[\d,.\s\u00a0']*")
+
+
+def _regex_step(pattern: str):
+    rx = re.compile(pattern)
+
+    def run(v: str):
+        m = rx.search(v)
+        return None if m is None else (m.group(1) if m.groups() else m.group(0))
+    return run
+
+
+def parse_number(v: str) -> int | float | None:
+    """First number in v, English style: '1,234.5 pts' -> 1234.5, '42 left' -> 42."""
+    m = _NUM.search(v)
+    if not m:
+        return None
+    raw = re.sub(r"[,\s\u00a0']", "", m.group(0)).rstrip(".")
+    try:
+        return float(raw) if "." in raw else int(raw)
+    except ValueError:
+        return None
+
+
+def parse_price(v: str) -> float | None:
+    """Amount in a price, either decimal style: '£51.77', '1.234,56 €', '$1,299' -> float.
+
+    The last '.' or ',' is the decimal mark unless exactly three digits follow it.
+    """
+    m = _NUM.search(v)
+    if not m:
+        return None
+    raw = re.sub(r"[\s\u00a0']", "", m.group(0)).rstrip(".,")
+    last = max(raw.rfind("."), raw.rfind(","))
+    if last >= 0 and len(raw) - last - 1 != 3:
+        whole, frac = raw[:last], raw[last + 1:]
+    else:
+        whole, frac = raw, ""
+    whole = re.sub(r"[.,]", "", whole)
+    try:
+        return float(f"{whole}.{frac}" if frac else whole)
+    except ValueError:
+        return None
+
+
+_STEPS = {
+    "strip": lambda arg: (lambda v: v.strip(arg)) if arg is not True else str.strip,
+    "regex": _regex_step,
+    "number": lambda arg: parse_number,
+    "price": lambda arg: parse_price,
+}
+
+
+def _compile_steps(spec) -> list:
+    """Compile a `process` list like ["strip", {"regex": "(\\d+)"}, "number"]."""
+    steps = []
+    for step in spec or []:
+        name, arg = (step, True) if isinstance(step, str) else next(iter(step.items()), (None, None))
+        if name not in _STEPS or (isinstance(step, dict) and len(step) != 1):
+            raise ValueError(f"unknown process step {step!r} (known: {', '.join(_STEPS)})")
+        steps.append(_STEPS[name](arg))
+    return steps
+
 
 class Recipe:
     """A declarative extraction recipe. See README for the format."""
@@ -124,6 +190,7 @@ class Recipe:
         f["css"] = f["selector"][: m.start()] if m else f["selector"]
         f["attr"] = m.group(2) if m else None
         f["regex"] = re.compile(f["regex"]) if f.get("regex") else None
+        f["steps"] = _compile_steps(f.get("process"))
         return f
 
     @classmethod
@@ -180,10 +247,17 @@ class Recipe:
                 if not m:
                     continue
                 v = m.group(1) if m.groups() else m.group(0)
-            try:
-                v = _TYPES[f.get("type", "str")](v)
-            except ValueError:
+            for step in f["steps"]:
+                v = step(v) if isinstance(v, str) else v
+                if v is None:
+                    break
+            if v is None:
                 continue
+            if "type" in f:
+                try:
+                    v = _TYPES[f["type"]](v)
+                except (TypeError, ValueError):
+                    continue
             vals.append(v)
             if not f.get("many"):
                 break
