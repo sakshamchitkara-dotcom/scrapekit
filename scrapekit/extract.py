@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from .dom import Node, parse
@@ -148,11 +150,41 @@ def parse_price(v: str) -> float | None:
         return None
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y",
+                 "%B %d %Y", "%b %d %Y", "%d.%m.%Y")
+
+
+def parse_date(v: str, fmt: str | None = None) -> str | None:
+    """ISO 8601 string for a date/datetime in v, or None.
+
+    With fmt, uses strptime. Otherwise tries ISO 8601, RFC 2822 (HTTP/email
+    dates) and a few unambiguous day-month-name formats. Numeric d/m/Y vs
+    m/d/Y is ambiguous, so pass a format for those.
+    """
+    v = " ".join(v.split()).replace("Sept ", "Sep ")
+    if fmt:
+        candidates = [lambda: datetime.strptime(v, fmt)]
+    else:
+        candidates = [lambda: datetime.fromisoformat(v.replace("Z", "+00:00")),
+                      lambda: parsedate_to_datetime(v)]
+        candidates += [lambda f=f: datetime.strptime(v, f) for f in _DATE_FORMATS]
+    for parse in candidates:
+        try:
+            d = parse()
+        except (ValueError, TypeError, IndexError):
+            continue
+        if d.tzinfo is None and d.time() == time(0):
+            return d.date().isoformat()
+        return d.isoformat()
+    return None
+
+
 _STEPS = {
     "strip": lambda arg: (lambda v: v.strip(arg)) if arg is not True else str.strip,
     "regex": _regex_step,
     "number": lambda arg: parse_number,
     "price": lambda arg: parse_price,
+    "date": lambda arg: (lambda v: parse_date(v, None if arg is True else arg)),
 }
 
 
