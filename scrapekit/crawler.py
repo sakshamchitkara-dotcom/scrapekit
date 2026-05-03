@@ -82,6 +82,8 @@ class Crawler:
         if cfg.user_agent:
             kw["user_agent"] = cfg.user_agent
         self.fetcher = fetcher or Fetcher(**kw)
+        # ponytail: pagination hop counts live in memory, so --resume restarts them at 0.
+        self._hops: dict[str, int] = {}
 
     # ------------------------------------------------------------ worker
     def _process(self, url: str) -> dict:
@@ -98,9 +100,10 @@ class Crawler:
             return {"state": "skipped", "note": resp.content_type, "status": resp.status}
         final = normalize(resp.final_url) or url
         doc = parse(resp.text)
-        items = []
+        items, pages = [], []
         next_urls = links(doc, final)
         if self.recipe:
+            pages = self.recipe.next_pages(doc, final)
             if self.recipe.applies(final):
                 items = self.recipe.extract(doc, final)
             follow = self.recipe.follow_links(doc, final)
@@ -108,7 +111,8 @@ class Crawler:
                 next_urls = follow
         h, content = content_hash(items, main_text(doc))
         return {"state": "done", "status": resp.status, "final": final, "title": title(doc),
-                "hash": h, "content": content, "items": items, "links": next_urls}
+                "hash": h, "content": content, "items": items, "links": next_urls,
+                "pages": pages}
 
     # ------------------------------------------------------------ driver
     def run(self, seed: str | None = None, resume: bool = False) -> int:
@@ -158,10 +162,18 @@ class Crawler:
         if r["state"] == "done":
             st.save_page(run_id, url, r["status"], r["title"], r["hash"], r["content"],
                          r["items"], self.recipe.name if self.recipe else None)
+            seed = st.db.execute("SELECT seed FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+
+            def in_scope(u):
+                return not self.cfg.same_domain or same_domain(u, seed)
+            limit = self.recipe.max_pagination if self.recipe else None
+            hops = self._hops.get(url, 0) + 1
+            for page in r["pages"]:  # same depth: paging through a listing isn't going deeper
+                if in_scope(page) and (limit is None or hops <= limit) and st.enqueue(run_id, page, depth):
+                    self._hops[page] = hops
             if depth < self.cfg.max_depth:
-                seed = st.db.execute("SELECT seed FROM runs WHERE id=?", (run_id,)).fetchone()[0]
                 for link in r["links"]:
-                    if not self.cfg.same_domain or same_domain(link, seed):
+                    if in_scope(link):
                         st.enqueue(run_id, link, depth + 1)
             log.info("%s %s items=%d", r["status"], url, len(r["items"]))
         else:
