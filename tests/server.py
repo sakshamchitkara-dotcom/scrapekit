@@ -2,10 +2,12 @@
 
 Serves tests/site/ plus two dynamic endpoints:
   /flaky      -> 503 twice, then 200 (exercises retry/backoff)
-  /mutable    -> body controlled by FixtureServer.mutable (change detection)
+  /mutable    -> body controlled by FixtureServer.mutable (change detection),
+                 with an ETag that honors If-None-Match
 Set FixtureServer.robots_status to make /robots.txt answer with that error code.
 Every request path is recorded in FixtureServer.log.
 """
+import hashlib
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -34,12 +36,20 @@ class _Handler(SimpleHTTPRequestHandler):
                 return
             return self._send("<html><title>Flaky OK</title></html>")
         if self.path == "/mutable":
-            return self._send(srv.mutable)
+            etag = '"%s"' % hashlib.sha1(srv.mutable.encode()).hexdigest()[:16]
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.end_headers()
+                return
+            return self._send(srv.mutable, {"ETag": etag})
         super().do_GET()
 
-    def _send(self, body):
+    def _send(self, body, headers=None):
         data = body.encode()
         self.send_response(200)
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

@@ -60,6 +60,19 @@ class TestFetch(unittest.TestCase):
             f = Fetcher(delay=0, retries=0)
             self.assertEqual(f.fetch(srv.url + "private/secret.html").status, 200)
 
+    def test_conditional_requests(self):
+        with FixtureServer() as srv:
+            f = Fetcher(delay=0, retries=0)
+            r = f.fetch(srv.url + "about.html")  # static file: Last-Modified
+            lm = r.headers["last-modified"]
+            self.assertEqual(f.fetch(srv.url + "about.html", last_modified=lm).status, 304)
+            r = f.fetch(srv.url + "mutable")  # dynamic: ETag
+            etag = r.headers["etag"]
+            nm = f.fetch(srv.url + "mutable", etag=etag)
+            self.assertEqual((nm.status, nm.body), (304, b""))
+            srv.mutable = "<html><title>v2</title></html>"
+            self.assertEqual(f.fetch(srv.url + "mutable", etag=etag).status, 200)
+
     def test_unreachable_host_disallowed_conservatively(self):
         f = Fetcher(delay=0, retries=0, timeout=1)
         self.assertFalse(f.allowed("http://127.0.0.1:9/x"))
