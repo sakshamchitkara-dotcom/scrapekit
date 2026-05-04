@@ -1,0 +1,11 @@
+{
+  "name": "fixture-list",
+  "item": "li.item",
+  "fields": {
+    "name": ".name",
+    "price": {"selector": ".price", "process": ["price"]},
+    "listed": {"selector": "time", "process": [{"date": "%d %b %Y"}]}
+  },
+  "follow": [],
+  "paginate": {"selector": "a.next", "max_pages": 10}
+}

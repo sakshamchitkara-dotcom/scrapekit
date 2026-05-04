@@ -3,12 +3,13 @@
   "match": "/catalogue/[^/]+_\\d+/index\\.html$",
   "fields": {
     "title": "div.product_main h1",
-    "price": {"selector": "div.product_main p.price_color", "regex": "[\\d.]+", "type": "float"},
-    "availability": {"selector": "div.product_main p.availability", "regex": "\\((\\d+) available", "type": "int"},
+    "price": {"selector": "div.product_main p.price_color", "process": ["price"]},
+    "availability": {"selector": "div.product_main p.availability", "process": [{"regex": "\\((\\d+) available"}, "number"]},
     "rating": {"selector": "div.product_main p.star-rating::attr(class)", "regex": "star-rating (\\w+)"},
     "upc": "table.table-striped tr:first-child td",
     "category": "ul.breadcrumb li:nth-child(3) a",
     "image": "div.item.active img::attr(src)"
   },
-  "follow": ["article.product_pod h3 a", "li.next a"]
+  "follow": ["article.product_pod h3 a"],
+  "paginate": {"selector": "li.next a", "max_pages": 49}
 }

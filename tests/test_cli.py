@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scrapekit.cli import main
+from scrapekit.extract import Recipe
 from tests.server import FixtureServer
 
 RECIPE = str(Path(__file__).parent.parent / "recipes" / "fixture.json")
@@ -40,6 +41,25 @@ class TestCli(unittest.TestCase):
             code, out = run("diff", "--db", db, "--exit-code")
             self.assertEqual(code, 0)
             self.assertIn("0 added, 0 removed, 0 changed", out)
+
+    def test_paginated_listing_recipe(self):
+        recipe = Path(RECIPE).with_name("fixture_list.json")
+        with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
+            db = os.path.join(tmp, "s.db")
+            code, out = run("crawl", srv.url + "list/page1.html", "--recipe", recipe, "--db", db,
+                            "--delay", "0", "--max-depth", "0")
+            self.assertEqual(code, 0)
+            self.assertIn("done=4", out)
+            self.assertIn("items=8", out)
+            _, out = run("export", "--db", db)
+        rows = [json.loads(l) for l in out.splitlines()]
+        self.assertEqual(rows[-1], {"name": "Item 4-b", "price": 1004.0, "listed": "2026-01-14",
+                                    "_url": srv.url + "list/page4.html"})
+
+    def test_bundled_recipes_load(self):
+        for path in Path(RECIPE).parent.glob("*.json"):
+            with self.subTest(recipe=path.name):
+                self.assertTrue(Recipe.load(path).fields)
 
     def test_extract(self):
         with FixtureServer() as srv:
