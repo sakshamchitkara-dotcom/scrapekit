@@ -1,9 +1,11 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
 from scrapekit.crawler import CrawlConfig, Crawler, discover_sitemap
 from scrapekit.fetch import Fetcher
+from scrapekit.diff import diff_runs
 from scrapekit.extract import Recipe
 from scrapekit.store import Store
 from tests.server import FixtureServer
@@ -69,6 +71,51 @@ class CrawlTest(unittest.TestCase):
             items = self.store.items(run)
             self.assertEqual(len(items), 2 * want_pages)
             self.assertEqual(items[1]["price"], 1001.0)  # "€1.001,00"
+
+    def test_recrawl_revalidates_and_reuses_unchanged_pages(self):
+        def statuses(run):
+            return sorted(r[0] for r in self.store.db.execute(
+                "SELECT status FROM pages WHERE run_id=?", (run,)))
+        with FixtureServer() as srv:
+            first = self.crawl(srv, RECIPE, max_depth=3)
+            second = self.crawl(srv, RECIPE, max_depth=3)
+            self.assertEqual(set(statuses(second)), {304})
+            self.assertEqual(statuses(first), [200] * len(statuses(second)))  # same pages found
+            by_name = sorted(self.store.items(first), key=lambda i: i["name"])
+            self.assertEqual(sorted(self.store.items(second), key=lambda i: i["name"]), by_name)
+            self.assertEqual(diff_runs(self.store, first, second)["changed"], [])
+            # a different recipe can't reuse cached items, so it refetches in full
+            third = self.crawl(srv, {**RECIPE, "name": "other"}, max_depth=3)
+            self.assertEqual(set(statuses(third)), {200})
+            # opting out
+            fourth = self.crawl(srv, {**RECIPE, "name": "other"}, max_depth=3, conditional=False)
+            self.assertEqual(set(statuses(fourth)), {200})
+
+    def test_etag_change_is_refetched(self):
+        with FixtureServer() as srv:
+            seed = srv.url + "mutable"
+            cfg = CrawlConfig(delay=0, retries=0, max_depth=0)
+            runs = [Crawler(self.store, cfg).run(seed) for _ in range(2)]
+            srv.mutable = "<html><title>v2</title><body><p>price 12</p></body></html>"
+            runs.append(Crawler(self.store, cfg).run(seed))
+        got = [self.store.db.execute("SELECT status, title FROM pages WHERE run_id=?", (r,)).fetchone()
+               for r in runs]
+        self.assertEqual([tuple(g) for g in got], [(200, "v1"), (304, "v1"), (200, "v2")])
+        self.assertEqual(len(diff_runs(self.store, runs[1], runs[2])["changed"]), 1)
+
+    def test_old_database_is_migrated(self):
+        path = os.path.join(self.tmp.name, "old.db")
+        db = sqlite3.connect(path)
+        db.execute("CREATE TABLE pages (run_id INTEGER, url TEXT, status INTEGER, fetched_at REAL,"
+                   " title TEXT, hash TEXT, content TEXT, PRIMARY KEY (run_id, url))")
+        db.execute("INSERT INTO pages VALUES (1, 'http://a/', 200, 0, 't', 'h', 'c')")
+        db.commit()
+        db.close()
+        st = Store(path)
+        cols = {r[1] for r in st.db.execute("PRAGMA table_info(pages)")}
+        self.assertTrue({"etag", "last_modified", "links", "recipe_fp"} <= cols)
+        self.assertIsNone(st.previous_page("http://a/", 2, ""))  # no validators: full fetch
+        st.close()
 
     def test_max_pages(self):
         with FixtureServer() as srv:

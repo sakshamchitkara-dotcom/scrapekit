@@ -1,6 +1,7 @@
 """Generic extractors and declarative recipe extraction."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, time
@@ -204,6 +205,7 @@ class Recipe:
 
     def __init__(self, spec: dict):
         self.name = spec.get("name", "recipe")
+        self.fingerprint = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
         self.match = re.compile(spec["match"]) if spec.get("match") else None
         self.item = spec.get("item")
         self.fields = {k: self._field(v) for k, v in spec.get("fields", {}).items()}

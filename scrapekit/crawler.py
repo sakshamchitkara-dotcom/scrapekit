@@ -32,6 +32,7 @@ class CrawlConfig:
     respect_robots: bool = True
     recipe_path: str | None = None
     sitemap: bool = False
+    conditional: bool = True
 
 
 def content_hash(items: list[dict], text: str) -> tuple[str, str]:
@@ -84,16 +85,20 @@ class Crawler:
         self.fetcher = fetcher or Fetcher(**kw)
         # ponytail: pagination hop counts live in memory, so --resume restarts them at 0.
         self._hops: dict[str, int] = {}
+        self.recipe_fp = recipe.fingerprint if recipe else ""
 
     # ------------------------------------------------------------ worker
-    def _process(self, url: str) -> dict:
+    def _process(self, url: str, validators: tuple = ()) -> dict:
         """Runs in a worker thread. No DB access here."""
         try:
-            resp = self.fetcher.fetch(url)
+            resp = self.fetcher.fetch(url, *validators)
         except RobotsDisallowed:
             return {"state": "skipped", "note": "robots.txt"}
         except (urllib.error.URLError, OSError) as e:
             return {"state": "failed", "note": str(e)}
+        cache = {"etag": resp.headers.get("etag"), "last_modified": resp.headers.get("last-modified")}
+        if resp.status == 304 and validators:
+            return {"state": "done", "status": 304, "not_modified": True, **cache}
         if resp.status >= 400:
             return {"state": "failed", "note": f"HTTP {resp.status}", "status": resp.status}
         if not resp.is_html:
@@ -112,7 +117,7 @@ class Crawler:
         h, content = content_hash(items, main_text(doc))
         return {"state": "done", "status": resp.status, "final": final, "title": title(doc),
                 "hash": h, "content": content, "items": items, "links": next_urls,
-                "pages": pages}
+                "pages": pages, **cache}
 
     # ------------------------------------------------------------ driver
     def run(self, seed: str | None = None, resume: bool = False) -> int:
@@ -146,22 +151,38 @@ class Crawler:
                 room = min(cfg.workers - len(inflight), cfg.max_pages - fetched)
                 if room > 0:
                     for url, depth in st.claim(run_id, room):
-                        inflight[pool.submit(self._process, url)] = (url, depth)
+                        prev = st.previous_page(url, run_id, self.recipe_fp) if cfg.conditional else None
+                        validators = (prev["etag"], prev["last_modified"]) if prev else ()
+                        inflight[pool.submit(self._process, url, validators)] = (url, depth, prev)
                 if not inflight:
                     break
                 done, _ = wait(inflight, return_when=FIRST_COMPLETED)
                 for fut in done:
-                    url, depth = inflight.pop(fut)
-                    self._record(run_id, url, depth, fut.result())
+                    url, depth, prev = inflight.pop(fut)
+                    r = fut.result()
+                    if r.get("not_modified"):
+                        r = self._reuse(prev, r)
+                    self._record(run_id, url, depth, r)
         st.finish_run(run_id)
         return run_id
+
+    def _reuse(self, prev, r: dict) -> dict:
+        """Fill a 304 result from the previous run's copy of the page."""
+        links = json.loads(prev["links"])
+        return {**r, "title": prev["title"], "hash": prev["hash"], "content": prev["content"],
+                "items": self.store.page_items(prev["run_id"], prev["url"]),
+                "links": links["links"], "pages": links["pages"],
+                "etag": r["etag"] or prev["etag"],
+                "last_modified": r["last_modified"] or prev["last_modified"]}
 
     def _record(self, run_id: int, url: str, depth: int, r: dict):
         st = self.store
         st.mark(run_id, url, r["state"], r.get("note"))
         if r["state"] == "done":
             st.save_page(run_id, url, r["status"], r["title"], r["hash"], r["content"],
-                         r["items"], self.recipe.name if self.recipe else None)
+                         r["items"], self.recipe.name if self.recipe else None,
+                         etag=r["etag"], last_modified=r["last_modified"],
+                         links={"links": r["links"], "pages": r["pages"]}, recipe_fp=self.recipe_fp)
             seed = st.db.execute("SELECT seed FROM runs WHERE id=?", (run_id,)).fetchone()[0]
 
             def in_scope(u):

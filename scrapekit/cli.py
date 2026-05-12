@@ -31,7 +31,7 @@ def cmd_crawl(a) -> int:
         cfg = CrawlConfig(max_depth=a.max_depth, max_pages=a.max_pages, workers=a.workers,
                           same_domain=not a.all_domains, user_agent=a.user_agent,
                           delay=a.delay, retries=a.retries, recipe_path=a.recipe,
-                          sitemap=a.sitemap)
+                          sitemap=a.sitemap, conditional=not a.no_conditional)
     recipe = Recipe.load(cfg.recipe_path) if cfg.recipe_path else None
     run = Crawler(store, cfg, recipe).run(a.url, resume=a.resume)
     counts = dict(store.db.execute(
@@ -118,6 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--all-domains", action="store_true", help="follow links off the seed's domain")
     c.add_argument("--sitemap", action="store_true",
                    help="also seed from robots.txt Sitemap: entries and /sitemap.xml")
+    c.add_argument("--no-conditional", action="store_true",
+                   help="always refetch in full instead of revalidating with ETag/Last-Modified")
     c.add_argument("--resume", action="store_true", help="resume the latest unfinished run")
     c.set_defaults(fn=cmd_crawl)
 
