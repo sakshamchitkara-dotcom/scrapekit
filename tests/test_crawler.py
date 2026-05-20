@@ -4,11 +4,11 @@ import tempfile
 import unittest
 
 from scrapekit.crawler import CrawlConfig, Crawler, discover_sitemap
-from scrapekit.fetch import Fetcher
 from scrapekit.diff import diff_runs
 from scrapekit.extract import Recipe
+from scrapekit.fetch import Fetcher
 from scrapekit.store import Store
-from tests.server import FixtureServer
+from tests.server import SITE, FixtureServer
 
 RECIPE = {
     "name": "products",
@@ -116,6 +116,24 @@ class CrawlTest(unittest.TestCase):
         self.assertTrue({"etag", "last_modified", "links", "recipe_fp"} <= cols)
         self.assertIsNone(st.previous_page("http://a/", 2, ""))  # no validators: full fetch
         st.close()
+
+    def test_stats(self):
+        with FixtureServer() as srv:
+            run = self.crawl(srv, RECIPE, max_depth=3)
+        st = self.store.stats(run)
+        self.assertEqual(st["status_codes"], {"200": 9})
+        self.assertEqual(st["states"], {"done": 9, "skipped": 1})
+        self.assertEqual(st["items"], 3)
+        size = sum((SITE / p).stat().st_size for p in (
+            "index.html", "about.html", "products/1.html", "products/2.html", "products/3.html",
+            "products/deep/level1.html", "products/deep/level2.html"))
+        size += 2 * (SITE / "index.html").stat().st_size  # "/" and "/index.html?a=1&b=2"
+        self.assertEqual(st["bytes"], size)
+        t = st["timing_ms"]
+        self.assertEqual(t["count"], 9)
+        self.assertTrue(0 < t["p50"] <= t["p95"] <= t["max"])
+        self.assertEqual(len(st["slowest"]), 5)
+        self.assertGreaterEqual(st["duration_s"], 0)
 
     def test_max_pages(self):
         with FixtureServer() as srv:

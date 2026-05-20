@@ -97,12 +97,13 @@ class Crawler:
         except (urllib.error.URLError, OSError) as e:
             return {"state": "failed", "note": str(e)}
         cache = {"etag": resp.headers.get("etag"), "last_modified": resp.headers.get("last-modified")}
+        metrics = {"status": resp.status, "bytes": len(resp.body), "elapsed_ms": resp.elapsed * 1000}
         if resp.status == 304 and validators:
-            return {"state": "done", "status": 304, "not_modified": True, **cache}
+            return {"state": "done", "not_modified": True, **cache, **metrics}
         if resp.status >= 400:
-            return {"state": "failed", "note": f"HTTP {resp.status}", "status": resp.status}
+            return {"state": "failed", "note": f"HTTP {resp.status}", **metrics}
         if not resp.is_html:
-            return {"state": "skipped", "note": resp.content_type, "status": resp.status}
+            return {"state": "skipped", "note": resp.content_type, **metrics}
         final = normalize(resp.final_url) or url
         doc = parse(resp.text)
         items, pages = [], []
@@ -115,7 +116,7 @@ class Crawler:
             if follow is not None:
                 next_urls = follow
         h, content = content_hash(items, main_text(doc))
-        return {"state": "done", "status": resp.status, "final": final, "title": title(doc),
+        return {"state": "done", **metrics, "final": final, "title": title(doc),
                 "hash": h, "content": content, "items": items, "links": next_urls,
                 "pages": pages, **cache}
 
@@ -177,7 +178,8 @@ class Crawler:
 
     def _record(self, run_id: int, url: str, depth: int, r: dict):
         st = self.store
-        st.mark(run_id, url, r["state"], r.get("note"))
+        st.mark(run_id, url, r["state"], r.get("note"), r.get("status"), r.get("bytes"),
+                r.get("elapsed_ms"))
         if r["state"] == "done":
             st.save_page(run_id, url, r["status"], r["title"], r["hash"], r["content"],
                          r["items"], self.recipe.name if self.recipe else None,
