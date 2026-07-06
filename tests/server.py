@@ -4,6 +4,7 @@ Serves tests/site/ plus two dynamic endpoints:
   /flaky      -> 503 twice, then 200 (exercises retry/backoff)
   /mutable    -> body controlled by FixtureServer.mutable (change detection),
                  with an ETag that honors If-None-Match
+  /redirect/P -> 302 to /P on this server
 Set FixtureServer.robots_status to make /robots.txt answer with that error code.
 Every request path is recorded in FixtureServer.log.
 """
@@ -27,6 +28,8 @@ class _Handler(SimpleHTTPRequestHandler):
         if self.path == "/robots.txt" and srv.robots_status:
             self.send_error(srv.robots_status)
             return
+        if self.path.startswith("/redirect/"):
+            return self._redirect(self.path[len("/redirect"):])
         if self.path == "/flaky":
             with srv.lock:
                 srv.flaky_hits += 1
@@ -44,6 +47,12 @@ class _Handler(SimpleHTTPRequestHandler):
                 return
             return self._send(srv.mutable, {"ETag": etag})
         super().do_GET()
+
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send(self, body, headers=None):
         data = body.encode()

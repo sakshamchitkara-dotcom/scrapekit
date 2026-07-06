@@ -30,6 +30,15 @@ class TestFetch(unittest.TestCase):
             r = Fetcher(delay=0, retries=1, backoff=0.01).fetch(srv.url + "flaky")
             self.assertEqual(r.status, 503)
 
+    def test_redirect_target_checked_against_robots(self):
+        with FixtureServer() as srv:
+            f = Fetcher(delay=0, retries=0)
+            r = f.fetch(srv.url + "redirect/about.html")
+            self.assertEqual((r.status, r.final_url), (200, srv.url + "about.html"))
+            with self.assertRaises(RobotsDisallowed):
+                f.fetch(srv.url + "redirect/private/secret.html")
+            self.assertNotIn("/private/secret.html", srv.paths())
+
     def test_404_not_retried(self):
         with FixtureServer() as srv:
             r = Fetcher(delay=0, retries=3).fetch(srv.url + "nope.html")
