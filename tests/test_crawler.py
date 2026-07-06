@@ -173,6 +173,20 @@ class CrawlTest(unittest.TestCase):
         self.assertEqual(len(st["slowest"]), 5)
         self.assertGreaterEqual(st["duration_s"], 0)
 
+    def test_offsite_redirect_is_skipped(self):
+        with FixtureServer() as srv:
+            seed = srv.url + "away"  # 302 to localhost:<port>/about.html
+            run = Crawler(self.store, CrawlConfig(delay=0, retries=0, max_depth=0)).run(seed)
+            wide = Crawler(self.store, CrawlConfig(delay=0, retries=0, max_depth=0,
+                                                   same_domain=False)).run(seed)
+
+        def row(r):
+            return tuple(self.store.db.execute(
+                "SELECT state, note FROM frontier WHERE run_id=? AND url=?", (r, seed)).fetchone())
+        port = srv.httpd.server_address[1]
+        self.assertEqual(row(run), ("skipped", f"redirected off-site to http://localhost:{port}/about.html"))
+        self.assertEqual(row(wide), ("done", None))
+
     def test_max_pages(self):
         with FixtureServer() as srv:
             run = self.crawl(srv, max_pages=3, workers=2)

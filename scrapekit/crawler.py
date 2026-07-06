@@ -96,6 +96,8 @@ class Crawler:
             return {"state": "failed", "note": str(e)}
         cache = {"etag": resp.headers.get("etag"), "last_modified": resp.headers.get("last-modified")}
         metrics = {"status": resp.status, "bytes": len(resp.body), "elapsed_ms": resp.elapsed * 1000}
+        if self.cfg.same_domain and not same_domain(resp.final_url, url):
+            return {"state": "skipped", "note": f"redirected off-site to {resp.final_url}", **metrics}
         if resp.status == 304 and validators:
             return {"state": "done", "not_modified": True, **cache, **metrics}
         if resp.status >= 400:
