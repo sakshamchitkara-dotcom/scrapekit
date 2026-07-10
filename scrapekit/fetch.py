@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -15,6 +16,7 @@ from . import __version__
 
 DEFAULT_UA = f"scrapekit/{__version__} (+https://github.com/sakshamchitkara-dotcom/scrapekit)"
 RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+_META_CHARSET = re.compile(rb"""<meta[^>]+charset\s*=\s*["']?\s*([\w.:-]+)""", re.I)
 
 
 @dataclass
@@ -38,7 +40,10 @@ class Response:
     def text(self) -> str:
         m = Message()
         m["content-type"] = self.headers.get("content-type", "")
-        charset = m.get_content_charset() or "utf-8"
+        charset = m.get_content_charset()
+        if not charset:  # <meta charset> / http-equiv, which must sit in the first 1024 bytes
+            found = _META_CHARSET.search(self.body[:1024])
+            charset = found.group(1).decode() if found else "utf-8"
         try:
             return self.body.decode(charset, errors="replace")
         except LookupError:
