@@ -4,6 +4,7 @@ Serves tests/site/ plus two dynamic endpoints:
   /flaky      -> 503 twice, then 200 (exercises retry/backoff)
   /mutable    -> body controlled by FixtureServer.mutable (change detection),
                  with an ETag that honors If-None-Match
+  /limited    -> 429 with `Retry-After: FixtureServer.retry_after` once, then 200
   /redirect/P -> 302 to /P on this server
   /away       -> 302 to about.html on "localhost" (a different host name, same server)
 Set FixtureServer.robots_status to make /robots.txt answer with that error code.
@@ -33,6 +34,17 @@ class _Handler(SimpleHTTPRequestHandler):
             return self._redirect(self.path[len("/redirect"):])
         if self.path == "/away":
             return self._redirect(f"http://localhost:{self.server.server_address[1]}/about.html")
+        if self.path == "/limited":
+            with srv.lock:
+                srv.limited_hits += 1
+                first = srv.limited_hits == 1
+            if first:
+                self.send_response(429)
+                self.send_header("Retry-After", srv.retry_after)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            return self._send("<html><title>Limited OK</title></html>")
         if self.path == "/flaky":
             with srv.lock:
                 srv.flaky_hits += 1
@@ -73,6 +85,8 @@ class FixtureServer:
         self.log = []
         self.lock = threading.Lock()
         self.flaky_hits = 0
+        self.limited_hits = 0
+        self.retry_after = "1"
         self.robots_status = None
         self.mutable = "<html><title>v1</title><body><p>price 10</p></body></html>"
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Handler, directory=str(SITE)))
