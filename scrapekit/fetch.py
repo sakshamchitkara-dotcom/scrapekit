@@ -83,9 +83,11 @@ class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
 class Fetcher:
     def __init__(self, user_agent: str = DEFAULT_UA, delay: float = 1.0, retries: int = 3,
                  backoff: float = 0.5, timeout: float = 15.0, max_bytes: int = 5_000_000,
-                 respect_robots: bool = True, proxy: str | None = None):
+                 respect_robots: bool = True, proxy: str | None = None,
+                 domain_delays: dict[str, float] | None = None):
         self.user_agent = user_agent
         self.delay = delay
+        self.domain_delays = {k.lower(): v for k, v in (domain_delays or {}).items()}
         self.retries = retries
         self.backoff = backoff
         self.timeout = timeout
@@ -134,7 +136,9 @@ class Fetcher:
         return not self.respect_robots or self.robots(url).can_fetch(self.user_agent, url)
 
     def _domain_delay(self, url: str) -> float:
-        d = self.delay
+        """--delay, or the host's own override (by host:port, then host); never below Crawl-delay."""
+        p = urlsplit(url)
+        d = self.domain_delays.get(p.netloc.lower(), self.domain_delays.get(p.hostname or "", self.delay))
         if self.respect_robots:
             cd = self.robots(url).crawl_delay(self.user_agent)
             if cd:

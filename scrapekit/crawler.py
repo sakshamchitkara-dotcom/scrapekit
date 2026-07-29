@@ -9,7 +9,7 @@ import logging
 import urllib.error
 import xml.etree.ElementTree as ET
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from .dom import parse
 from .extract import Recipe, links, main_text, title
@@ -33,6 +33,7 @@ class CrawlConfig:
     recipe_path: str | None = None
     sitemap: bool = False
     conditional: bool = True
+    domain_delays: dict[str, float] = field(default_factory=dict)  # host -> seconds
 
 
 def content_hash(items: list[dict], text: str) -> tuple[str, str]:
@@ -81,7 +82,7 @@ class Crawler:
         self.recipe = recipe
         # proxy is not part of CrawlConfig, so credentials in it never reach the database
         kw = {"delay": cfg.delay, "retries": cfg.retries, "respect_robots": cfg.respect_robots,
-              "proxy": proxy}
+              "proxy": proxy, "domain_delays": cfg.domain_delays}
         if cfg.user_agent:
             kw["user_agent"] = cfg.user_agent
         self.fetcher = fetcher or Fetcher(**kw)
