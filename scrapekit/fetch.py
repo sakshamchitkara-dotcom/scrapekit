@@ -83,7 +83,7 @@ class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
 class Fetcher:
     def __init__(self, user_agent: str = DEFAULT_UA, delay: float = 1.0, retries: int = 3,
                  backoff: float = 0.5, timeout: float = 15.0, max_bytes: int = 5_000_000,
-                 respect_robots: bool = True):
+                 respect_robots: bool = True, proxy: str | None = None):
         self.user_agent = user_agent
         self.delay = delay
         self.retries = retries
@@ -95,9 +95,11 @@ class Fetcher:
         self._next_slot: dict[str, float] = {}
         self._lock = threading.Lock()
         self._robots_locks: dict[str, threading.Lock] = {}
+        # Without an explicit proxy, urllib uses HTTP(S)_PROXY / NO_PROXY from the environment.
+        proxies = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
         # robots.txt itself is fetched without the redirect check (it would recurse)
-        self._plain = urllib.request.build_opener()
-        self._checked = urllib.request.build_opener(_CheckedRedirect(self))
+        self._plain = urllib.request.build_opener(*proxies)
+        self._checked = urllib.request.build_opener(_CheckedRedirect(self), *proxies)
 
     # -------------------------------------------------------------- robots
     def robots(self, url: str) -> urllib.robotparser.RobotFileParser:

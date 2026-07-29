@@ -33,7 +33,7 @@ def cmd_crawl(a) -> int:
                           delay=a.delay, retries=a.retries, recipe_path=a.recipe,
                           sitemap=a.sitemap, conditional=not a.no_conditional)
     recipe = Recipe.load(cfg.recipe_path) if cfg.recipe_path else None
-    run = Crawler(store, cfg, recipe).run(a.url, resume=a.resume)
+    run = Crawler(store, cfg, recipe, proxy=a.proxy).run(a.url, resume=a.resume)
     st = store.stats(run)
     counts = st["states"]
     print(f"run {run}: done={counts.get('done', 0)} failed={counts.get('failed', 0)} "
@@ -59,7 +59,7 @@ def stats_line(st: dict) -> str:
 
 
 def cmd_extract(a) -> int:
-    f = Fetcher(user_agent=a.user_agent or DEFAULT_UA, delay=0)
+    f = Fetcher(user_agent=a.user_agent or DEFAULT_UA, delay=0, proxy=a.proxy)
     try:
         resp = f.fetch(a.url)
     except RobotsDisallowed:
@@ -141,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     def db(sp):
         sp.add_argument("--db", default="scrapekit.db", help="sqlite database (default: %(default)s)")
 
+    def proxy(sp):
+        sp.add_argument("--proxy", metavar="URL",
+                        help="HTTP proxy for all requests, e.g. http://user:pass@host:3128 "
+                             "(default: HTTP_PROXY/HTTPS_PROXY from the environment; not saved)")
+
     c = sub.add_parser("crawl", help="crawl a site from a seed URL")
     c.add_argument("url", nargs="?")
     db(c)
@@ -157,12 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--no-conditional", action="store_true",
                    help="always refetch in full instead of revalidating with ETag/Last-Modified")
     c.add_argument("--resume", action="store_true", help="resume the latest unfinished run")
+    proxy(c)
     c.set_defaults(fn=cmd_crawl)
 
     e = sub.add_parser("extract", help="fetch one URL and print extracted JSON")
     e.add_argument("url")
     e.add_argument("--recipe")
     e.add_argument("--user-agent")
+    proxy(e)
     e.set_defaults(fn=cmd_extract)
 
     d = sub.add_parser("diff", help="show changes between two runs")
