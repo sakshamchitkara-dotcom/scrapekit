@@ -123,6 +123,9 @@ def generic(html: str, url: str) -> dict:
 
 # ------------------------------------------------------------------ recipes
 
+RECIPE_KEYS = {"name", "match", "item", "fields", "follow", "paginate"}
+FIELD_KEYS = {"selector", "regex", "process", "type", "many", "default"}
+
 _PSEUDO = re.compile(r"::(text|attr\(([\w:-]+)\))\s*$")
 _TYPES = {"str": str, "int": int, "float": float}
 
@@ -256,16 +259,29 @@ class Recipe:
         f["steps"] = _compile_steps(f.get("process"))
         return f
 
-    @classmethod
-    def load(cls, path: str | Path) -> Recipe:
+    @staticmethod
+    def read_spec(path: str | Path) -> dict:
         text = Path(path).read_text()
         if str(path).endswith((".yml", ".yaml")):
             try:
                 import yaml  # optional dependency
             except ImportError as e:
                 raise SystemExit("YAML recipes need PyYAML: pip install 'scrapekit[yaml]'") from e
-            return cls(yaml.safe_load(text))
-        return cls(json.loads(text))
+            return yaml.safe_load(text)
+        return json.loads(text)
+
+    @classmethod
+    def load(cls, path: str | Path) -> Recipe:
+        return cls(cls.read_spec(path))
+
+    def selectors(self) -> dict[str, str]:
+        """Every CSS selector in the recipe, keyed by where it appears."""
+        out = {"item": self.item} if self.item else {}
+        out.update({f"fields.{k}": f["css"] for k, f in self.fields.items() if f["css"].strip()})
+        out.update({f"follow[{i}]": s for i, s in enumerate(self.follow or [])})
+        if self.paginate:
+            out["paginate"] = self.paginate
+        return out
 
     def applies(self, url: str) -> bool:
         return self.match is None or bool(self.match.search(url))
@@ -335,3 +351,31 @@ class Recipe:
         if f.get("many"):
             return vals
         return vals[0] if vals else f.get("default")
+
+
+def lint(spec) -> tuple[list[str], list[str]]:
+    """Check a recipe spec without fetching anything. Returns (errors, warnings)."""
+    if not isinstance(spec, dict):
+        return [f"recipe must be an object, got {type(spec).__name__}"], []
+    warnings = [f"unknown key {k!r}" for k in spec if k not in RECIPE_KEYS]
+    for name, f in (spec.get("fields") or {}).items():
+        if isinstance(f, dict):
+            warnings += [f"fields.{name}: unknown key {k!r}" for k in f if k not in FIELD_KEYS]
+    if not isinstance(spec.get("follow", []), (list, type(None))):
+        return ["follow must be a list of selectors"], warnings
+    pg = spec.get("paginate")
+    if isinstance(pg, dict) and pg.get("max_pages") is not None and (
+            not isinstance(pg["max_pages"], int) or pg["max_pages"] < 1):
+        return [f"paginate.max_pages must be a positive integer, got {pg['max_pages']!r}"], warnings
+    try:
+        recipe = Recipe(spec)
+    except (ValueError, TypeError, AttributeError, re.error) as e:
+        return [str(e)], warnings
+    errors = []
+    empty = parse("")
+    for where, sel in recipe.selectors().items():
+        try:
+            empty.select(sel)
+        except ValueError as e:
+            errors.append(f"{where}: {e}")
+    return errors, warnings

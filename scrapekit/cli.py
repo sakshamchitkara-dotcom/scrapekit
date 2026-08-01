@@ -12,7 +12,7 @@ from . import __doc__ as _pkg_doc
 from .crawler import CrawlConfig, Crawler
 from .diff import diff_runs, format_report, has_changes, pick_runs, post_webhook
 from .export import to_csv, to_jsonl, to_sqlite
-from .extract import Recipe, generic
+from .extract import Recipe, generic, lint
 from .fetch import DEFAULT_UA, Fetcher, RobotsDisallowed
 from .store import Store
 
@@ -84,6 +84,51 @@ def cmd_extract(a) -> int:
     json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
     print()
     return 0
+
+
+def cmd_lint(a) -> int:
+    """Validate recipes offline; with --url, also report how often each field matched."""
+    failed = False
+    for path in a.recipes:
+        try:
+            spec = Recipe.read_spec(path)
+        except (OSError, ValueError) as e:  # missing file, bad JSON/YAML
+            errors, warnings = [str(e)], []
+        else:
+            errors, warnings = lint(spec)
+        failed |= bool(errors)
+        for w in warnings:
+            print(f"{path}: warning: {w}")
+        for e in errors:
+            print(f"{path}: error: {e}")
+        if errors:
+            continue
+        recipe = Recipe(spec)
+        print(f"{path}: ok ({len(recipe.fields)} fields)")
+        if a.url:
+            failed |= not _lint_against(recipe, a.url, a.user_agent)
+    return 1 if failed else 0
+
+
+def _lint_against(recipe: Recipe, url: str, user_agent: str | None) -> bool:
+    """Print per-field match counts on one page. False if the page can't be checked."""
+    try:
+        resp = Fetcher(user_agent=user_agent or DEFAULT_UA, delay=0).fetch(url)
+    except RobotsDisallowed:
+        print(f"  {url}: disallowed by robots.txt")
+        return False
+    except OSError as e:  # includes URLError
+        print(f"  {url}: {e}")
+        return False
+    if not recipe.applies(resp.final_url):
+        print(f"  {url}: HTTP {resp.status}, URL does not match the recipe's `match`")
+        return True
+    items = recipe.extract(resp.text, resp.final_url)
+    print(f"  {url}: HTTP {resp.status}, {len(items)} items")
+    for k in recipe.fields:
+        n = sum(i.get(k) not in (None, []) for i in items)
+        print(f"    {k:<16} {n}/{len(items)}" + ("   <- never matched" if items and not n else ""))
+    return True
 
 
 def cmd_diff(a) -> int:
@@ -185,6 +230,12 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--user-agent")
     proxy(e)
     e.set_defaults(fn=cmd_extract)
+
+    lt = sub.add_parser("lint", help="validate recipes (keys, selectors, regexes, process steps)")
+    lt.add_argument("recipes", nargs="+", metavar="RECIPE")
+    lt.add_argument("--url", help="also fetch this page and count how often each field matches")
+    lt.add_argument("--user-agent")
+    lt.set_defaults(fn=cmd_lint)
 
     d = sub.add_parser("diff", help="show changes between two runs")
     db(d)
