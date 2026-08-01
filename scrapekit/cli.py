@@ -147,7 +147,7 @@ def cmd_export(a) -> int:
     runs = store.runs()
     if not a.run and not runs:
         sys.exit("no finished runs to export")
-    run = a.run or runs[-1]["id"]
+    run = store.run(a.run)["id"] if a.run else runs[-1]["id"]
     if a.pages:
         rows = [dict(r) for r in store.db.execute(
             "SELECT url, status, fetched_at, title, hash FROM pages WHERE run_id=? ORDER BY url", (run,))]

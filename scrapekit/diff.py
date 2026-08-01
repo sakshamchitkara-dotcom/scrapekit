@@ -10,6 +10,9 @@ from .store import Store
 
 def pick_runs(store: Store, old: int | None = None, new: int | None = None) -> tuple[int, int]:
     """Default: the latest finished run and the previous finished run of the same seed."""
+    for given in (old, new):
+        if given is not None:
+            store.run(given)  # exits if unknown
     runs = store.runs()
     if new is None:
         if not runs:
