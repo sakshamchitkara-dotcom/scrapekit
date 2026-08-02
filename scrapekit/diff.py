@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import urllib.error
 import urllib.request
 
 from .store import Store
@@ -60,9 +61,16 @@ def format_report(d: dict) -> str:
 
 
 def post_webhook(url: str, d: dict, timeout: float = 10) -> int:
-    """POST the diff as JSON (Slack-compatible: includes a 'text' field)."""
+    """POST the diff as JSON (Slack-compatible: includes a 'text' field).
+
+    Returns the HTTP status, including error statuses. Network errors raise OSError.
+    """
     body = json.dumps({"text": format_report(d), **d}).encode()
     req = urllib.request.Request(url, body, {"Content-Type": "application/json",
                                               "User-Agent": "scrapekit-alerts"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.status
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        with e:
+            return e.code

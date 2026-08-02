@@ -54,6 +54,17 @@ class TestCli(unittest.TestCase):
                 with self.subTest(argv=argv), self.assertRaisesRegex(SystemExit, "no run 99"):
                     run(*argv, "--db", db)
 
+    def test_diff_webhook_failure_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
+            db = os.path.join(tmp, "w.db")
+            for price in ("10", "12"):
+                srv.mutable = f"<html><body><p>price {price}</p></body></html>"
+                run("crawl", srv.url + "mutable", "--db", db, "--delay", "0", "--max-depth", "0")
+            code, out = run("diff", "--db", db, "--webhook", srv.url + "no-such-hook")  # 501 to POST
+            self.assertEqual(code, 2)
+            self.assertIn("1 changed", out)  # the report still prints
+            self.assertEqual(run("diff", "--db", db, "--webhook", "http://127.0.0.1:9/hook")[0], 2)
+
     def test_paginated_listing_recipe(self):
         recipe = Path(RECIPE).with_name("fixture_list.json")
         with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
