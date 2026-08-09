@@ -20,6 +20,8 @@ from .store import Store
 def cmd_crawl(a) -> int:
     store = Store(a.db)
     if a.resume:
+        if a.url:
+            sys.exit("--resume continues the latest unfinished run; drop the URL")
         row = store.unfinished_run()
         if row is None:
             sys.exit("nothing to resume")
