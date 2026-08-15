@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         extras: [""]
         include:
           - os: macos-latest
@@ -34,3 +34,16 @@ jobs:
         run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
       - name: CLI smoke test
         run: scrapekit --version && scrapekit --help
+      - name: Lint bundled recipes
+        run: scrapekit lint recipes/*.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t scrapekit:ci .
+      - name: Smoke test image
+        run: |
+          docker run --rm scrapekit:ci --version
+          docker run --rm scrapekit:ci lint /app/recipes/books_listing.json /app/recipes/fixture.json
