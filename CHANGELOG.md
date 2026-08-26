@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.0 - 2026-09-25
+
+### Added
+- `scrapekit lint RECIPE...` validates recipes offline (unknown keys, selectors,
+  regexes, process steps, `follow`, `paginate.max_pages`) and exits 1 on errors.
+  `--url` also reports how many items each field matched on a live page.
+- `--proxy URL` for `crawl` and `extract`. `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`
+  still apply without it. The proxy is never saved in the run config.
+- `crawl --domain-delay HOST=SECONDS` (repeatable) overrides `--delay` per host.
+- `main_text` merges sibling blocks and loose paragraphs, Readability-style.
+- A Dockerfile. CI builds and smoke-tests the image, lints the bundled recipes and
+  runs on Python 3.14 too.
+
+### Fixed
+- Pagination hop counts are stored in the frontier, so `--resume` no longer resets
+  each chain's `max_pages` cap.
+- Redirect targets are checked against robots.txt before they're followed.
+- Same-domain crawls skip pages that redirect to another host.
+- Pages served as `text/html` without a charset are decoded using their
+  `<meta charset>` or `http-equiv` declaration instead of always UTF-8.
+- `Retry-After` given as an HTTP date is honored (only seconds were before).
+- Selectors with a leading or trailing combinator (`div >`, `> p`) raise instead of
+  matching as if `*` followed.
+- `export --run N` and `diff --old/--new N` exit with "no run N" for unknown runs
+  instead of reporting nothing.
+- `diff --webhook` prints "webhook failed: ..." and exits 2 when the POST fails or
+  returns an error status, instead of a traceback.
+- `crawl URL --resume` is rejected instead of silently ignoring the URL.
+
+### Changed
+- Main text on pages with split content is longer than before, so those pages hash
+  differently. The first `diff` across the upgrade may report them as changed.
+- The `frontier` table gains a `hops` column. Existing databases are upgraded in place.
+
 ## 0.2.0 - 2026-09-25
 
 ### Added
