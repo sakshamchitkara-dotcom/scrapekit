@@ -18,23 +18,37 @@ AUTOCLOSE = {"p", "li", "option", "tr", "td", "th", "dt", "dd"}
 
 
 class Node:
-    __slots__ = ("tag", "attrs", "children", "parent")
+    __slots__ = ("tag", "attrs", "children", "parent", "_els", "_pos")
 
     def __init__(self, tag: str, attrs: dict | None = None, parent: Node | None = None):
         self.tag = tag
         self.attrs = attrs or {}
         self.children: list[Node | str] = []
         self.parent = parent
+        self._els = self._pos = None  # caches; the tree isn't modified after parse()
 
     @property
     def elements(self) -> list[Node]:
-        return [c for c in self.children if isinstance(c, Node)]
+        if self._els is None:
+            self._els = [c for c in self.children if isinstance(c, Node)]
+        return self._els
+
+    def index(self) -> tuple[int, int]:
+        """(position among the parent's element children, number of them)."""
+        if self.parent is None:
+            return 0, 1
+        par = self.parent
+        if par._pos is None:
+            par._pos = {id(c): i for i, c in enumerate(par.elements)}
+        return par._pos[id(self)], len(par.elements)
 
     def iter(self):
         """Depth-first over descendant elements (not self)."""
-        for c in self.elements:
-            yield c
-            yield from c.iter()
+        stack = self.elements[::-1]
+        while stack:
+            n = stack.pop()
+            yield n
+            stack += n.elements[::-1]
 
     def text(self, skip=("script", "style", "noscript", "template")) -> str:
         parts: list[str] = []
@@ -213,19 +227,16 @@ def _nth(arg: str):
 
 
 def _pseudo_pred(name, arg):
-    def index(n):
-        sibs = n.parent.elements if n.parent else [n]
-        return sibs.index(n), len(sibs)
     if name == "first-child" and arg is None:
-        return lambda n: index(n)[0] == 0
+        return lambda n: n.index()[0] == 0
     if name == "last-child" and arg is None:
-        return lambda n: index(n)[0] == index(n)[1] - 1
+        return lambda n: n.index()[0] == n.index()[1] - 1
     if name == "not" and arg:
         groups = _compile(arg)
         return lambda n: not any(_matches(n, g, len(g) - 1) for g in groups)
     if name == "nth-child" and arg is not None:
         test = _nth(arg)
-        return lambda n: test(index(n)[0] + 1)
+        return lambda n: test(n.index()[0] + 1)
     raise ValueError(f"unsupported pseudo-class :{name}" + (f"({arg})" if arg is not None else ""))
 
 
@@ -233,8 +244,7 @@ def _prev_siblings(node: Node) -> list[Node]:
     """Element siblings before node, nearest first."""
     if node.parent is None:
         return []
-    sibs = node.parent.elements
-    return sibs[: sibs.index(node)][::-1]
+    return node.parent.elements[: node.index()[0]][::-1]
 
 
 def _matches(node: Node, steps, i: int) -> bool:
