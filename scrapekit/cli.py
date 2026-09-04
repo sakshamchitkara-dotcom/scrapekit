@@ -36,7 +36,12 @@ def cmd_crawl(a) -> int:
                           sitemap=a.sitemap, conditional=not a.no_conditional,
                           domain_delays=dict(a.domain_delay or []))
     recipe = Recipe.load(cfg.recipe_path) if cfg.recipe_path else None
-    run = Crawler(store, cfg, recipe, proxy=a.proxy).run(a.url, resume=a.resume)
+    try:
+        run = Crawler(store, cfg, recipe, proxy=a.proxy).run(a.url, resume=a.resume)
+    except KeyboardInterrupt:  # every finished page is already committed
+        store.close()
+        print(f"\ninterrupted; continue with: scrapekit crawl --resume --db {a.db}", file=sys.stderr)
+        return 130
     st = store.stats(run)
     counts = st["states"]
     print(f"run {run}: done={counts.get('done', 0)} failed={counts.get('failed', 0)} "

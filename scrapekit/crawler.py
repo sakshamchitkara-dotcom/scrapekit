@@ -149,7 +149,8 @@ class Crawler:
 
         cfg = self.cfg
         inflight: dict = {}
-        with ThreadPoolExecutor(cfg.workers) as pool:
+        pool = ThreadPoolExecutor(cfg.workers)
+        try:
             while True:
                 fetched = st.count(run_id, "done", "failed", "inflight")
                 room = min(cfg.workers - len(inflight), cfg.max_pages - fetched)
@@ -167,6 +168,10 @@ class Crawler:
                     if r.get("not_modified"):
                         r = self._reuse(prev, r)
                     self._record(run_id, url, depth, r, hops)
+        finally:
+            # On Ctrl-C, don't sit out in-flight fetches (and their retries); they stay
+            # 'inflight' in the frontier and are queued again by --resume.
+            pool.shutdown(wait=False, cancel_futures=True)
         st.finish_run(run_id)
         return run_id
 
