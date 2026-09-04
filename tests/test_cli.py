@@ -206,3 +206,16 @@ class TestInterrupt(unittest.TestCase):
                 code = main(["crawl", "http://127.0.0.1:9/", "--db", db])
             self.assertEqual(code, 130)
             self.assertIn(f"scrapekit crawl --resume --db {db}", err.getvalue())
+
+
+class TestRuns(unittest.TestCase):
+    def test_lists_runs(self):
+        with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
+            db = os.path.join(tmp, "s.db")
+            run("crawl", srv.url, "--recipe", RECIPE, "--db", db, "--delay", "0", "--max-depth", "3")
+            code, out = run("runs", "--db", db, "--json")
+            self.assertEqual(code, 0)
+            (r,) = json.loads(out)
+            self.assertEqual((r["id"], r["seed"], r["pages"], r["items"]), (1, srv.url, 9, 3))
+            _, out = run("runs", "--db", db)
+            self.assertRegex(out, r"^\s+1  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\s+[\d.]+ s  pages=9\s+items=3")

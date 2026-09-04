@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from dataclasses import fields
 
 from . import __version__
@@ -202,6 +203,26 @@ def cmd_stats(a) -> int:
     return 0
 
 
+def cmd_runs(a) -> int:
+    store = Store(a.db)
+    rows = [dict(r) for r in store.db.execute(
+        "SELECT r.id, r.seed, r.started, r.finished,"
+        " (SELECT COUNT(*) FROM frontier f WHERE f.run_id=r.id AND f.state='done') AS pages,"
+        " (SELECT COUNT(*) FROM items i WHERE i.run_id=r.id) AS items"
+        " FROM runs r ORDER BY r.id")]
+    store.close()
+    if a.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    for r in rows:
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["started"]))
+        state = "unfinished" if r["finished"] is None else f"{r['finished'] - r['started']:.1f} s"
+        print(f"{r['id']:>4}  {started}  {state:>10}  pages={r['pages']:<5} items={r['items']:<6} {r['seed']}")
+    if not rows:
+        print("no runs", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="scrapekit", description=_pkg_doc)
     p.add_argument("--version", action="version", version=__version__)
@@ -265,6 +286,11 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--run", type=int, help="run id (default: latest)")
     t.add_argument("--json", action="store_true")
     t.set_defaults(fn=cmd_stats)
+
+    rn = sub.add_parser("runs", help="list runs (id, start time, duration, pages, items, seed)")
+    db(rn)
+    rn.add_argument("--json", action="store_true")
+    rn.set_defaults(fn=cmd_runs)
 
     x = sub.add_parser("export", help="export items (or pages) of a run")
     db(x)
