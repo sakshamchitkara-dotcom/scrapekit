@@ -206,7 +206,11 @@ class Crawler:
                 for link in r["links"]:
                     if in_scope(link):
                         st.enqueue(run_id, link, depth + 1)
-            log.info("%s %s items=%d", r["status"], url, len(r["items"]))
+            log.info("%s %s items=%d", r["status"], url, len(r["items"]),
+                     extra={"run": run_id, "url": url, "state": "done", "status": r["status"],
+                            "items": len(r["items"]), "ms": round(r["elapsed_ms"], 1)})
         else:
-            log.info("%s %s (%s)", r["state"], url, r.get("note"))
+            log.info("%s %s (%s)", r["state"], url, r.get("note"),
+                     extra={"run": run_id, "url": url, "state": r["state"],
+                            "status": r.get("status"), "note": r.get("note")})
         st.commit()  # per page, so a killed crawl can resume

@@ -219,3 +219,23 @@ class TestRuns(unittest.TestCase):
             self.assertEqual((r["id"], r["seed"], r["pages"], r["items"]), (1, srv.url, 9, 3))
             _, out = run("runs", "--db", db)
             self.assertRegex(out, r"^\s+1  \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\s+[\d.]+ s  pages=9\s+items=3")
+
+
+class TestJsonLogs(unittest.TestCase):
+    def test_one_json_object_per_page(self):
+        import logging
+        with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
+            db = os.path.join(tmp, "s.db")
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                main(["-v", "--log-json", "crawl", srv.url, "--recipe", RECIPE, "--db", db,
+                      "--delay", "0", "--max-depth", "3"])
+            logging.getLogger().handlers.clear()
+            lines = [json.loads(l) for l in err.getvalue().splitlines()]
+            pages = [l for l in lines if "url" in l]
+            self.assertEqual(len(pages), 10)  # 9 done + 1 skipped by robots.txt
+            skipped = [l for l in pages if l["state"] == "skipped"]
+            self.assertEqual(skipped[0]["note"], "robots.txt")
+            done = [l for l in pages if l["url"].endswith("/products/1.html")][0]
+            self.assertEqual((done["run"], done["status"], done["items"]), (1, 200, 1))
+            self.assertIsInstance(done["ms"], float)
