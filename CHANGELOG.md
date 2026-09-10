@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 - 2026-09-25
+
+### Added
+- `scrapekit runs` lists runs (id, start time, duration or "unfinished", pages,
+  items, seed), with `--json`.
+- `--log-json` writes log lines as JSON objects. Per-page crawl lines carry `run`,
+  `url`, `state`, `status`, `items`, `ms` and `note`.
+
+### Fixed
+- Ctrl-C during `crawl` prints how to resume and exits 130 instead of a traceback.
+
+### Performance
+- `:nth-child`, `:first-child`, `:last-child` and sibling combinators no longer look
+  up positions with a linear scan (`li:nth-child(2n)` over 3,000 items: 172 ms to
+  4.2 ms), and tree walks are iterative.
+
 ## 0.3.0 - 2026-09-25
 
 ### Added
