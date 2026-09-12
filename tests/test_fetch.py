@@ -1,10 +1,13 @@
+import base64
+import os
 import time
 import unittest
 import urllib.error
 from email.utils import formatdate
+from unittest import mock
 
 from scrapekit.fetch import Fetcher, Response, RobotsDisallowed, retry_after
-from tests.server import FixtureServer
+from tests.server import FixtureServer, ProxyServer
 
 
 class TestFetch(unittest.TestCase):
@@ -141,3 +144,35 @@ class TestFetch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHttpsProxy(unittest.TestCase):
+    """HTTPS through a CONNECT proxy, with and without proxy authentication."""
+
+    def fetch(self, srv, proxy_url):
+        # SSL_CERT_FILE is how users trust a private CA too (e.g. a TLS-inspecting proxy)
+        with mock.patch.dict(os.environ, {"SSL_CERT_FILE": srv.cert}):
+            return Fetcher(delay=0, retries=0, proxy=proxy_url).fetch(srv.url + "about.html")
+
+    def test_connect_tunnel(self):
+        with FixtureServer(tls=True) as srv, ProxyServer() as proxy:
+            r = self.fetch(srv, proxy.url)
+            self.assertEqual((r.status, r.final_url), (200, srv.url + "about.html"))
+            host = srv.url.split("/")[2]
+            # robots.txt and the page each open a tunnel; the proxy never sees the paths
+            self.assertEqual(proxy.log, [f"CONNECT {host}"] * 2)
+            self.assertEqual(srv.paths(), ["/robots.txt", "/about.html"])
+
+    def test_proxy_auth(self):
+        with FixtureServer(tls=True) as srv, ProxyServer(auth="bob:p@ss:w0rd") as proxy:
+            host = proxy.url.split("//")[1]
+            r = self.fetch(srv, f"http://bob:p%40ss%3Aw0rd@{host}")
+            self.assertEqual(r.status, 200)
+            self.assertEqual(proxy.auth_seen, ["Basic " + base64.b64encode(b"bob:p@ss:w0rd").decode()] * 2)
+
+    def test_wrong_proxy_auth(self):
+        with FixtureServer(tls=True) as srv, ProxyServer(auth="bob:right") as proxy:
+            host = proxy.url.split("//")[1]
+            with self.assertRaises(RobotsDisallowed):  # robots.txt unreachable: disallow all
+                self.fetch(srv, f"http://bob:wrong@{host}")
+            self.assertEqual(srv.paths(), [])

@@ -17,6 +17,8 @@ detection. **Pure Python standard library** (3.10+), no required dependencies.
   pagination hop counts) lives in SQLite and is committed after every page, so an
   interrupted crawl continues with `--resume`.
 - **Proxies**: `--proxy URL`, or the usual `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`.
+  HTTPS goes through `CONNECT`; put credentials in the URL (`http://user:pass@host:3128`,
+  percent-encoded). For a TLS-inspecting proxy, point `SSL_CERT_FILE` at its CA bundle.
 - **Cheap re-crawls**: pages are revalidated with `If-None-Match` / `If-Modified-Since`.
   A `304` reuses the previous run's content, items and links instead of downloading
   the page again.
@@ -441,8 +443,10 @@ that answers 429 with a `Retry-After` once, a `/mutable` endpoint with an ETag (
 change detection and conditional requests), `/redirect/<path>` and `/away` (an
 off-site redirect) endpoints, and can make `/robots.txt` return any error status.
 `ProxyServer` is a fake forward proxy for the `--proxy` tests, which use `.invalid`
-hosts that only resolve through it. CI runs the suite on Python 3.10 to 3.14, plus a job
-with PyYAML installed so the YAML recipe tests run instead of being skipped, lints the
+hosts that only resolve through it. It also tunnels `CONNECT` to an HTTPS fixture
+server (a throwaway self-signed certificate made with the `openssl` CLI; those tests
+are skipped without it) and can require Basic proxy authentication. CI runs the suite
+on Python 3.10 to 3.14, plus a job with PyYAML installed so the YAML recipe tests run instead of being skipped, lints the
 bundled recipes, and builds and smoke-tests the Docker image.
 
 ## Ethical scraping and Terms of Service
@@ -486,8 +490,8 @@ scrapekit is polite by default, but you are still responsible for how you use it
 
 ### Not verified
 
-- `--proxy` was only tested against a local fake proxy with plain HTTP. HTTPS through a
-  real proxy (`CONNECT`) and proxy authentication weren't tried.
+- `--proxy` was tested against a local fake proxy (plain HTTP, HTTPS via `CONNECT`, and
+  Basic proxy authentication), not against a real proxy product such as Squid.
 - The Docker image was built and run on linux/arm64 (Docker Desktop on macOS). CI builds
   it on linux/amd64.
 
