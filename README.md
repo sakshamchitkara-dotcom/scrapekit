@@ -97,7 +97,9 @@ higher), `--domain-delay HOST=SECONDS` (repeatable, matched on `host:port` then 
 `--retries` (3), `--user-agent`, `--proxy`, `--all-domains`, `--sitemap`,
 `--no-conditional` (always download in full), `--db`. `--resume` reuses the saved
 options, except `--proxy`, which is never saved (it may hold a password), so pass it
-again. Ctrl-C stops a crawl and prints the `--resume` command (exit status 130).
+again. Ctrl-C stops a crawl and prints the `--resume` command (exit status 130). It
+doesn't wait out rate-limit delays or retry backoff; a request already on the wire can
+still take up to its 15 s timeout.
 
 ### Docker
 

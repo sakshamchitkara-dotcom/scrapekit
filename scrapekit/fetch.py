@@ -72,6 +72,10 @@ class RobotsDisallowed(Exception):
         self.url, self.reason = url, reason
 
 
+class Stopped(Exception):
+    """Fetcher.stop() was called while this fetch was waiting its turn or backing off."""
+
+
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
     """Follow a redirect only if robots.txt allows its target."""
 
@@ -102,6 +106,7 @@ class Fetcher:
         self._robots_errors: dict[str, str] = {}  # origin -> why robots.txt blocks everything
         self._next_slot: dict[str, float] = {}
         self._lock = threading.Lock()
+        self._stop = threading.Event()
         self._robots_locks: dict[str, threading.Lock] = {}
         # Without an explicit proxy, urllib uses HTTP(S)_PROXY / NO_PROXY from the environment.
         proxies = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
@@ -159,6 +164,17 @@ class Fetcher:
         return d
 
     # ---------------------------------------------------------- rate limit
+    def stop(self):
+        """Make waiting and future fetches raise Stopped (for a fast Ctrl-C).
+
+        A request already on the wire still runs to completion or its timeout.
+        """
+        self._stop.set()
+
+    def _sleep(self, seconds: float):
+        if self._stop.wait(seconds):
+            raise Stopped
+
     def _wait_turn(self, url: str):
         dom = urlsplit(url).netloc
         delay = self._domain_delay(url)
@@ -166,8 +182,7 @@ class Fetcher:
             now = time.monotonic()
             slot = max(now, self._next_slot.get(dom, 0.0))
             self._next_slot[dom] = slot + delay
-        if slot > now:
-            time.sleep(slot - now)
+        self._sleep(max(0.0, slot - now))
 
     # --------------------------------------------------------------- fetch
     def _request(self, url: str, headers: dict | None = None, opener=None) -> Response:
@@ -194,7 +209,8 @@ class Fetcher:
         Pass a previous response's ETag / Last-Modified to make the request
         conditional; an unchanged page then comes back as status 304 with no body.
         Redirects are followed only to URLs robots.txt allows.
-        Raises RobotsDisallowed, or the last network error once retries run out.
+        Raises RobotsDisallowed, Stopped after stop(), or the last network error once
+        retries run out.
         Returns non-retryable HTTP errors (e.g. 404) as a Response.
         """
         if not self.allowed(url):
@@ -218,5 +234,5 @@ class Fetcher:
                 ra = retry_after(resp.headers.get("retry-after", ""))
                 if ra is not None:
                     wait = max(wait, min(ra, 60.0))
-            time.sleep(wait)
+            self._sleep(wait)
         raise AssertionError("unreachable")
