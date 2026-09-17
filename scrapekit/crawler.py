@@ -93,8 +93,8 @@ class Crawler:
         """Runs in a worker thread. No DB access here."""
         try:
             resp = self.fetcher.fetch(url, *validators)
-        except RobotsDisallowed:
-            return {"state": "skipped", "note": "robots.txt"}
+        except RobotsDisallowed as e:
+            return {"state": "skipped", "note": e.reason}
         except (urllib.error.URLError, OSError) as e:
             return {"state": "failed", "note": str(e)}
         cache = {"etag": resp.headers.get("etag"), "last_modified": resp.headers.get("last-modified")}

@@ -81,8 +81,9 @@ def cmd_extract(a) -> int:
     f = Fetcher(user_agent=a.user_agent or DEFAULT_UA, delay=0, proxy=a.proxy)
     try:
         resp = f.fetch(a.url)
-    except RobotsDisallowed:
-        sys.exit(f"disallowed by robots.txt: {a.url}")
+    except RobotsDisallowed as e:
+        sys.exit(f"disallowed by robots.txt: {a.url}" if e.reason == "robots.txt"
+                 else f"not fetched, {e.reason}: {a.url}")
     if resp.status >= 400:
         sys.exit(f"HTTP {resp.status}: {a.url}")
     if a.recipe:
@@ -122,8 +123,9 @@ def _lint_against(recipe: Recipe, url: str, user_agent: str | None) -> bool:
     """Print per-field match counts on one page. False if the page can't be checked."""
     try:
         resp = Fetcher(user_agent=user_agent or DEFAULT_UA, delay=0).fetch(url)
-    except RobotsDisallowed:
-        print(f"  {url}: disallowed by robots.txt")
+    except RobotsDisallowed as e:
+        print(f"  {url}: disallowed by {e.reason}" if e.reason == "robots.txt"
+              else f"  {url}: not fetched, {e.reason}")
         return False
     except OSError as e:  # includes URLError
         print(f"  {url}: {e}")
