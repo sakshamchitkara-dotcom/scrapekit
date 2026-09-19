@@ -187,8 +187,27 @@ class Crawler:
                 "etag": r["etag"] or prev["etag"],
                 "last_modified": r["last_modified"] or prev["last_modified"]}
 
+    def _redirect_dedup(self, run_id: int, url: str, final: str, r: dict) -> dict:
+        """url redirected to final. Keep one copy of the page: if final was already
+        crawled, url becomes a skipped duplicate; otherwise final is marked skipped so
+        it isn't fetched again. Returns the (possibly replaced) result for url."""
+        st = self.store
+        row = st.db.execute("SELECT state FROM frontier WHERE run_id=? AND url=?",
+                            (run_id, final)).fetchone()
+        if row and row["state"] == "done":
+            return {"state": "skipped", "note": f"redirects to {final} (already crawled)",
+                    **{k: r[k] for k in ("status", "bytes", "elapsed_ms")}}
+        # ponytail: an 'inflight' target is left alone, so both copies may be stored.
+        if row is None or row["state"] == "queued":
+            st.enqueue(run_id, final, 0)
+            st.mark(run_id, final, "skipped", f"duplicate of {url} (redirect)")
+        return r
+
     def _record(self, run_id: int, url: str, depth: int, r: dict, hops: int = 0):
         st = self.store
+        final = r.get("final")
+        if r["state"] == "done" and final and final != url:
+            r = self._redirect_dedup(run_id, url, final, r)
         st.mark(run_id, url, r["state"], r.get("note"), r.get("status"), r.get("bytes"),
                 r.get("elapsed_ms"))
         if r["state"] == "done":
