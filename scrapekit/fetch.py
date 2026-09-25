@@ -49,6 +49,19 @@ class RobotsDisallowed(Exception):
     pass
 
 
+class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only if robots.txt allows its target."""
+
+    def __init__(self, fetcher: Fetcher):
+        self.fetcher = fetcher
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not self.fetcher.allowed(newurl):
+            fp.close()
+            raise RobotsDisallowed(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class Fetcher:
     def __init__(self, user_agent: str = DEFAULT_UA, delay: float = 1.0, retries: int = 3,
                  backoff: float = 0.5, timeout: float = 15.0, max_bytes: int = 5_000_000,
@@ -64,6 +77,9 @@ class Fetcher:
         self._next_slot: dict[str, float] = {}
         self._lock = threading.Lock()
         self._robots_locks: dict[str, threading.Lock] = {}
+        # robots.txt itself is fetched without the redirect check (it would recurse)
+        self._plain = urllib.request.build_opener()
+        self._checked = urllib.request.build_opener(_CheckedRedirect(self))
 
     # -------------------------------------------------------------- robots
     def robots(self, url: str) -> urllib.robotparser.RobotFileParser:
@@ -117,7 +133,7 @@ class Fetcher:
             time.sleep(slot - now)
 
     # --------------------------------------------------------------- fetch
-    def _request(self, url: str, headers: dict | None = None) -> Response:
+    def _request(self, url: str, headers: dict | None = None, opener=None) -> Response:
         req = urllib.request.Request(url, headers={
             "User-Agent": self.user_agent,
             "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
@@ -125,7 +141,7 @@ class Fetcher:
         })
         t0 = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with (opener or self._plain).open(req, timeout=self.timeout) as r:
                 body = r.read(self.max_bytes + 1)[: self.max_bytes]
                 headers = {k.lower(): v for k, v in r.headers.items()}
                 return Response(url, r.geturl(), r.status, headers, body, time.monotonic() - t0)
@@ -140,6 +156,7 @@ class Fetcher:
 
         Pass a previous response's ETag / Last-Modified to make the request
         conditional; an unchanged page then comes back as status 304 with no body.
+        Redirects are followed only to URLs robots.txt allows.
         Raises RobotsDisallowed, or the last network error once retries run out.
         Returns non-retryable HTTP errors (e.g. 404) as a Response.
         """
@@ -154,7 +171,7 @@ class Fetcher:
             self._wait_turn(url)
             wait = self.backoff * (2 ** attempt) * (1 + random.random() * 0.1)
             try:
-                resp = self._request(url, cond)
+                resp = self._request(url, cond, self._checked)
             except (urllib.error.URLError, OSError):
                 if attempt == self.retries:
                     raise
