@@ -116,10 +116,11 @@ class Fetcher:
             time.sleep(slot - now)
 
     # --------------------------------------------------------------- fetch
-    def _request(self, url: str) -> Response:
+    def _request(self, url: str, headers: dict | None = None) -> Response:
         req = urllib.request.Request(url, headers={
             "User-Agent": self.user_agent,
             "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+            **(headers or {}),
         })
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
@@ -131,19 +132,26 @@ class Fetcher:
                 headers = {k.lower(): v for k, v in (e.headers or {}).items()}
                 return Response(url, url, e.code, headers, e.read() if e.fp else b"")
 
-    def fetch(self, url: str) -> Response:
+    def fetch(self, url: str, etag: str | None = None, last_modified: str | None = None) -> Response:
         """GET with robots check, rate limit and exponential-backoff retries.
 
+        Pass a previous response's ETag / Last-Modified to make the request
+        conditional; an unchanged page then comes back as status 304 with no body.
         Raises RobotsDisallowed, or the last network error once retries run out.
         Returns non-retryable HTTP errors (e.g. 404) as a Response.
         """
         if not self.allowed(url):
             raise RobotsDisallowed(url)
+        cond = {}
+        if etag:
+            cond["If-None-Match"] = etag
+        if last_modified:
+            cond["If-Modified-Since"] = last_modified
         for attempt in range(self.retries + 1):
             self._wait_turn(url)
             wait = self.backoff * (2 ** attempt) * (1 + random.random() * 0.1)
             try:
-                resp = self._request(url)
+                resp = self._request(url, cond)
             except (urllib.error.URLError, OSError):
                 if attempt == self.retries:
                     raise
