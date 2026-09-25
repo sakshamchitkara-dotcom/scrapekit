@@ -480,7 +480,9 @@ scrapekit is polite by default, but you are still responsible for how you use it
   paragraphs). It only looks one level out, at siblings, and has no per-site rules.
 - Redirects are followed by urllib, but each target is checked against robots.txt
   first. A same-domain crawl records a page that redirects to another host as skipped.
-  A page is stored under the URL that was queued, not the redirect target.
+  A page is stored under the URL that was queued, not the redirect target. If the target
+  is also queued it is marked skipped (`duplicate of ...`) instead of being fetched again;
+  if it was already crawled, the redirecting URL is skipped rather than stored twice.
 - Response times in `stats` cover the final attempt of each request only. Rate-limit
   waits and retry backoff aren't included. `robots.txt` and sitemap fetches are not
   counted as pages.

@@ -187,6 +187,25 @@ class CrawlTest(unittest.TestCase):
         self.assertEqual(row(run), ("skipped", f"redirected off-site to http://localhost:{port}/about.html"))
         self.assertEqual(row(wide), ("done", None))
 
+    def test_redirect_to_known_url_is_fetched_once(self):
+        with FixtureServer() as srv:
+            run = Crawler(self.store, CrawlConfig(delay=0, retries=0, max_depth=1, workers=1)
+                          ).run(srv.url + "redirects.html")
+        rows = dict(((u.removeprefix(srv.url), (s, n and n.replace(srv.url, "")))
+                     for u, s, n in self.store.db.execute(
+                         "SELECT url, state, note FROM frontier WHERE run_id=?", (run,))))
+        self.assertEqual(rows["about.html"], ("done", None))
+        # fetched (the redirect isn't known in advance) but not stored twice
+        self.assertEqual(rows["redirect/about.html"],
+                         ("skipped", "redirects to about.html (already crawled)"))
+        self.assertEqual(rows["redirect/products/1.html"], ("done", None))
+        self.assertEqual(rows["products/1.html"],
+                         ("skipped", "duplicate of redirect/products/1.html (redirect)"))
+        self.assertEqual(srv.paths().count("/products/1.html"), 1)
+        self.assertEqual(srv.paths().count("/about.html"), 2)
+        self.assertEqual(sorted(self.store.pages(run)), sorted(
+            srv.url + p for p in ("redirects.html", "about.html", "redirect/products/1.html")))
+
     def test_max_pages(self):
         with FixtureServer() as srv:
             run = self.crawl(srv, max_pages=3, workers=2)
