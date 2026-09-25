@@ -99,6 +99,46 @@ class TestCli(unittest.TestCase):
                                      "http://scrapekit.invalid/robots.txt",
                                      "http://scrapekit.invalid/"])
 
+    def test_lint(self):
+        code, out = run("lint", *sorted(Path(RECIPE).parent.glob("*.json")))
+        self.assertEqual(code, 0)
+        self.assertEqual(out.count(": ok ("), 4)
+        bad = {"name": "bad", "folow": ["a"], "item": "li >", "paginate": {"selector": "a", "max_pages": 0},
+               "fields": {"t": {"selecter": "h1", "selector": "h1"}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            def lint(spec):
+                path = os.path.join(tmp, "r.json")
+                Path(path).write_text(json.dumps(spec))
+                return run("lint", path)
+            code, out = lint(bad)
+            self.assertEqual(code, 1)
+            self.assertIn("warning: unknown key 'folow'", out)
+            self.assertIn("warning: fields.t: unknown key 'selecter'", out)
+            self.assertIn("error: paginate.max_pages must be a positive integer, got 0", out)
+            del bad["paginate"]
+            self.assertIn("error: item: empty selector or dangling combinator in 'li >'", lint(bad)[1])
+            for spec, msg in (({**bad, "item": None, "follow": "a"}, "follow must be a list"),
+                              ({"fields": {"x": {"selector": "p", "regex": "("}}}, "error: "),
+                              ({"fields": {"x": {"selector": "p", "process": ["prize"]}}},
+                               "unknown process step 'prize'"),
+                              ([], "recipe must be an object")):
+                with self.subTest(msg=msg):
+                    code, out = lint(spec)
+                    self.assertEqual(code, 1)
+                    self.assertIn(msg, out)
+
+    def test_lint_against_url(self):
+        with FixtureServer() as srv:
+            code, out = run("lint", RECIPE, "--url", srv.url + "products/1.html")
+            self.assertEqual(code, 0)
+            self.assertIn("HTTP 200, 1 items", out)
+            self.assertRegex(out, r"name +1/1\n")
+            _, out = run("lint", RECIPE, "--url", srv.url + "about.html")
+            self.assertIn("does not match the recipe's `match`", out)
+            code, out = run("lint", RECIPE, "--url", srv.url + "private/secret.html")
+            self.assertEqual(code, 1)
+            self.assertIn("disallowed by robots.txt", out)
+
     def test_extract(self):
         with FixtureServer() as srv:
             _, out = run("extract", srv.url + "products/1.html")
