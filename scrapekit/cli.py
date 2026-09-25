@@ -111,6 +111,27 @@ def cmd_export(a) -> int:
     return 0
 
 
+def cmd_stats(a) -> int:
+    store = Store(a.db)
+    runs = store.runs(finished_only=False)
+    if not runs:
+        sys.exit("no runs")
+    st = store.stats(a.run or runs[-1]["id"])
+    store.close()
+    if a.json:
+        print(json.dumps(st, indent=2))
+        return 0
+    s = st["states"]
+    print(f"run {st['run']}: {st['seed']}")
+    print(f"  pages   done={s.get('done', 0)} failed={s.get('failed', 0)} "
+          f"skipped={s.get('skipped', 0)} unvisited={s.get('queued', 0) + s.get('inflight', 0)} "
+          f"items={st['items']}")
+    print(stats_line(st))
+    for r in st["slowest"]:
+        print(f"  slow    {r['ms']:>8} ms  {r['status']}  {r['url']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="scrapekit", description=_pkg_doc)
     p.add_argument("--version", action="version", version=__version__)
@@ -152,6 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--webhook", help="POST changes as JSON to this URL")
     d.add_argument("--exit-code", action="store_true", help="exit 1 when changes are found")
     d.set_defaults(fn=cmd_diff)
+
+    t = sub.add_parser("stats", help="status codes, bytes and timings of a run")
+    db(t)
+    t.add_argument("--run", type=int, help="run id (default: latest)")
+    t.add_argument("--json", action="store_true")
+    t.set_defaults(fn=cmd_stats)
 
     x = sub.add_parser("export", help="export items (or pages) of a run")
     db(x)

@@ -43,6 +43,14 @@ class TestCli(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("0 added, 0 removed, 0 changed", out)
 
+            _, out = run("stats", "--db", db)  # latest run: a re-crawl, so all revalidated
+            self.assertIn("run 2: " + srv.url, out)
+            self.assertIn("http 304=9 | 0 B |", out)
+            _, out = run("stats", "--db", db, "--run", 1, "--json")
+            self.assertEqual(json.loads(out)["status_codes"], {"200": 9})
+            with self.assertRaises(SystemExit):
+                run("stats", "--db", db, "--run", 99)
+
     def test_paginated_listing_recipe(self):
         recipe = Path(RECIPE).with_name("fixture_list.json")
         with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
