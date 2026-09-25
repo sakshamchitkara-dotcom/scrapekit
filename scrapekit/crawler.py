@@ -83,8 +83,6 @@ class Crawler:
         if cfg.user_agent:
             kw["user_agent"] = cfg.user_agent
         self.fetcher = fetcher or Fetcher(**kw)
-        # ponytail: pagination hop counts live in memory, so --resume restarts them at 0.
-        self._hops: dict[str, int] = {}
         self.recipe_fp = recipe.fingerprint if recipe else ""
 
     # ------------------------------------------------------------ worker
@@ -151,19 +149,19 @@ class Crawler:
                 fetched = st.count(run_id, "done", "failed", "inflight")
                 room = min(cfg.workers - len(inflight), cfg.max_pages - fetched)
                 if room > 0:
-                    for url, depth in st.claim(run_id, room):
+                    for url, depth, hops in st.claim(run_id, room):
                         prev = st.previous_page(url, run_id, self.recipe_fp) if cfg.conditional else None
                         validators = (prev["etag"], prev["last_modified"]) if prev else ()
-                        inflight[pool.submit(self._process, url, validators)] = (url, depth, prev)
+                        inflight[pool.submit(self._process, url, validators)] = (url, depth, hops, prev)
                 if not inflight:
                     break
                 done, _ = wait(inflight, return_when=FIRST_COMPLETED)
                 for fut in done:
-                    url, depth, prev = inflight.pop(fut)
+                    url, depth, hops, prev = inflight.pop(fut)
                     r = fut.result()
                     if r.get("not_modified"):
                         r = self._reuse(prev, r)
-                    self._record(run_id, url, depth, r)
+                    self._record(run_id, url, depth, r, hops)
         st.finish_run(run_id)
         return run_id
 
@@ -176,7 +174,7 @@ class Crawler:
                 "etag": r["etag"] or prev["etag"],
                 "last_modified": r["last_modified"] or prev["last_modified"]}
 
-    def _record(self, run_id: int, url: str, depth: int, r: dict):
+    def _record(self, run_id: int, url: str, depth: int, r: dict, hops: int = 0):
         st = self.store
         st.mark(run_id, url, r["state"], r.get("note"), r.get("status"), r.get("bytes"),
                 r.get("elapsed_ms"))
@@ -190,10 +188,10 @@ class Crawler:
             def in_scope(u):
                 return not self.cfg.same_domain or same_domain(u, seed)
             limit = self.recipe.max_pagination if self.recipe else None
-            hops = self._hops.get(url, 0) + 1
+            hops += 1  # stored in the frontier, so the cap survives --resume
             for page in r["pages"]:  # same depth: paging through a listing isn't going deeper
-                if in_scope(page) and (limit is None or hops <= limit) and st.enqueue(run_id, page, depth):
-                    self._hops[page] = hops
+                if in_scope(page) and (limit is None or hops <= limit):
+                    st.enqueue(run_id, page, depth, hops)
             if depth < self.cfg.max_depth:
                 for link in r["links"]:
                     if in_scope(link):

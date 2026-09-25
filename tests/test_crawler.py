@@ -90,6 +90,26 @@ class CrawlTest(unittest.TestCase):
             self.assertEqual(len(items), 2 * want_pages)
             self.assertEqual(items[1]["price"], 1001.0)  # "€1.001,00"
 
+    def test_pagination_limit_survives_resume(self):
+        rec = Recipe({"item": "li.item", "follow": [], "fields": {"name": ".name"},
+                      "paginate": {"selector": "a.next", "max_pages": 2}})
+        cfg = CrawlConfig(delay=0, retries=0, max_depth=0, workers=1)
+        with FixtureServer() as srv:
+            c = Crawler(self.store, cfg, rec)
+            orig, n = c._record, [0]
+
+            def boom(*a):
+                orig(*a)
+                n[0] += 1
+                if n[0] == 2:  # page2 done, page3 queued with 2 hops
+                    raise KeyboardInterrupt
+            c._record = boom
+            with self.assertRaises(KeyboardInterrupt):
+                c.run(srv.url + "list/page1.html")
+            Crawler(self.store, cfg, rec).run(resume=True)
+            fetched = [p for p in srv.paths() if p != "/robots.txt"]
+        self.assertEqual(fetched, [f"/list/page{i}.html" for i in (1, 2, 3)])  # no page4
+
     def test_recrawl_revalidates_and_reuses_unchanged_pages(self):
         def statuses(run):
             return sorted(r[0] for r in self.store.db.execute(

@@ -45,7 +45,8 @@ CREATE INDEX IF NOT EXISTS pages_url ON pages(url, run_id);
 # Columns added after 0.1.0; created on open so older databases keep working.
 ADDED_COLUMNS = {
     "pages": {"etag": "TEXT", "last_modified": "TEXT", "links": "TEXT", "recipe_fp": "TEXT"},
-    "frontier": {"status": "INTEGER", "bytes": "INTEGER", "elapsed_ms": "REAL"},
+    "frontier": {"status": "INTEGER", "bytes": "INTEGER", "elapsed_ms": "REAL",
+                 "hops": "INTEGER NOT NULL DEFAULT 0"},  # pagination hops from the chain start
 }
 
 
@@ -85,22 +86,23 @@ class Store:
         return self.db.execute(q + " ORDER BY id").fetchall()
 
     # ------------------------------------------------------------ frontier
-    def enqueue(self, run_id: int, url: str, depth: int) -> bool:
+    def enqueue(self, run_id: int, url: str, depth: int, hops: int = 0) -> bool:
         """Add url if unseen in this run. Returns True if it was new."""
         cur = self.db.execute(
-            "INSERT OR IGNORE INTO frontier(run_id, url, depth, seq) "
-            "VALUES (?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM frontier WHERE run_id=?))",
-            (run_id, url, depth, run_id))
+            "INSERT OR IGNORE INTO frontier(run_id, url, depth, hops, seq) "
+            "VALUES (?,?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM frontier WHERE run_id=?))",
+            (run_id, url, depth, hops, run_id))
         return cur.rowcount == 1
 
-    def claim(self, run_id: int, n: int) -> list[tuple[str, int]]:
+    def claim(self, run_id: int, n: int) -> list[tuple[str, int, int]]:
+        """Mark up to n queued URLs inflight. Returns (url, depth, hops) tuples."""
         rows = self.db.execute(
-            "SELECT url, depth FROM frontier WHERE run_id=? AND state='queued' ORDER BY seq LIMIT ?",
+            "SELECT url, depth, hops FROM frontier WHERE run_id=? AND state='queued' ORDER BY seq LIMIT ?",
             (run_id, n)).fetchall()
         self.db.executemany("UPDATE frontier SET state='inflight' WHERE run_id=? AND url=?",
                             [(run_id, r["url"]) for r in rows])
         self.db.commit()
-        return [(r["url"], r["depth"]) for r in rows]
+        return [(r["url"], r["depth"], r["hops"]) for r in rows]
 
     def mark(self, run_id: int, url: str, state: str, note: str | None = None,
              status: int | None = None, bytes_: int | None = None, elapsed_ms: float | None = None):
