@@ -8,10 +8,20 @@ Serves tests/site/ plus two dynamic endpoints:
   /redirect/P -> 302 to /P on this server
   /away       -> 302 to about.html on "localhost" (a different host name, same server)
 Set FixtureServer.robots_status to make /robots.txt answer with that error code.
-Every request path is recorded in FixtureServer.log.
+Every request path is recorded in FixtureServer.log. FixtureServer(tls=True) serves
+HTTPS with a throwaway self-signed certificate (see make_cert).
 """
+import base64
 import hashlib
+import os
+import select
+import shutil
+import socket
+import ssl
+import subprocess
+import tempfile
 import threading
+import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -80,8 +90,19 @@ class _Handler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def make_cert(directory: str) -> tuple[str, str]:
+    """Self-signed cert and key for 127.0.0.1 in directory. Needs the openssl CLI."""
+    if not shutil.which("openssl"):
+        raise unittest.SkipTest("openssl CLI not found")
+    cert, key = os.path.join(directory, "cert.pem"), os.path.join(directory, "key.pem")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+                    "-keyout", key, "-out", cert], check=True, capture_output=True)
+    return cert, key
+
+
 class FixtureServer:
-    def __init__(self):
+    def __init__(self, tls: bool = False):
         self.log = []
         self.lock = threading.Lock()
         self.flaky_hits = 0
@@ -91,7 +112,15 @@ class FixtureServer:
         self.mutable = "<html><title>v1</title><body><p>price 10</p></body></html>"
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Handler, directory=str(SITE)))
         self.httpd.fixture = self
-        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/"
+        self.cert = None
+        if tls:
+            self._tmp = tempfile.TemporaryDirectory()
+            self.cert, key = make_cert(self._tmp.name)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(self.cert, key)
+            self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
+        scheme = "https" if tls else "http"
+        self.url = f"{scheme}://127.0.0.1:{self.httpd.server_address[1]}/"
 
     def __enter__(self):
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -100,20 +129,38 @@ class FixtureServer:
     def __exit__(self, *exc):
         self.httpd.shutdown()
         self.httpd.server_close()
+        if self.cert:
+            self._tmp.cleanup()
 
     def paths(self):
         return [p for p, _ in self.log]
 
 
 class _ProxyHandler(SimpleHTTPRequestHandler):
-    """Answers proxied requests (absolute-URI request lines) itself."""
+    """Answers plain-HTTP proxied requests (absolute-URI request lines) itself and
+    tunnels CONNECT requests to the real target. Optionally requires Basic auth."""
 
     def log_message(self, *a):
         pass
 
+    def _authorized(self) -> bool:
+        owner = self.server.owner
+        got = self.headers.get("Proxy-Authorization")
+        with owner.lock:
+            owner.auth_seen.append(got)
+        if owner.auth is None or got == "Basic " + base64.b64encode(owner.auth.encode()).decode():
+            return True
+        self.send_response(407)
+        self.send_header("Proxy-Authenticate", 'Basic realm="test"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return False
+
     def do_GET(self):
         with self.server.owner.lock:
             self.server.owner.log.append(self.path)
+        if not self._authorized():
+            return
         if self.path.endswith("/robots.txt"):
             self.send_error(404)
             return
@@ -124,12 +171,41 @@ class _ProxyHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_CONNECT(self):
+        with self.server.owner.lock:
+            self.server.owner.log.append("CONNECT " + self.path)
+        if not self._authorized():
+            return
+        host, _, port = self.path.rpartition(":")
+        try:
+            upstream = socket.create_connection((host, int(port)), timeout=5)
+        except OSError:
+            self.send_error(502)
+            return
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        conns = [self.connection, upstream]
+        with upstream:
+            while True:  # pipe bytes both ways until either side closes
+                ready, _, _ = select.select(conns, [], [], 5)
+                if not ready:
+                    return
+                for c in ready:
+                    data = c.recv(65536)
+                    if not data:
+                        return
+                    (upstream if c is self.connection else self.connection).sendall(data)
+
 
 class ProxyServer:
-    """A fake forward proxy. Records the absolute URLs it was asked for in .log."""
+    """A fake forward proxy. Logs the absolute URLs (plain HTTP) and "CONNECT host:port"
+    lines it was asked for in .log, and each request's Proxy-Authorization in .auth_seen.
+    With auth="user:pass" it answers 407 unless that Basic auth is sent."""
 
-    def __init__(self):
+    def __init__(self, auth: str | None = None):
         self.log = []
+        self.auth = auth
+        self.auth_seen = []
         self.lock = threading.Lock()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ProxyHandler)
         self.httpd.owner = self
