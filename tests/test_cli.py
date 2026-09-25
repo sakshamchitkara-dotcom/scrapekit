@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 
 from scrapekit.cli import main
+from scrapekit.crawler import CrawlConfig, Crawler
 from scrapekit.extract import Recipe
+from scrapekit.store import Store
 from tests.server import FixtureServer, ProxyServer
 
 RECIPE = str(Path(__file__).parent.parent / "recipes" / "fixture.json")
@@ -64,6 +66,33 @@ class TestCli(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("1 changed", out)  # the report still prints
             self.assertEqual(run("diff", "--db", db, "--webhook", "http://127.0.0.1:9/hook")[0], 2)
+
+    def test_resume_restores_saved_config(self):
+        with tempfile.TemporaryDirectory() as tmp, FixtureServer() as srv:
+            db = os.path.join(tmp, "r.db")
+            self.assertRaisesRegex(SystemExit, "nothing to resume", run, "crawl", "--resume", "--db", db)
+            store = Store(db)  # an interrupted CLI crawl: config saved, seed done, rest queued
+            cfg = CrawlConfig(max_depth=3, delay=0, retries=0, recipe_path=RECIPE,
+                              domain_delays={"example.org": 2.0})
+            c = Crawler(store, cfg, Recipe.load(RECIPE))
+            orig = c._record
+
+            def interrupt(*a):
+                orig(*a)
+                raise KeyboardInterrupt  # right after the seed page is committed
+            c._record = interrupt
+            with self.assertRaises(KeyboardInterrupt):
+                c.run(srv.url)
+            store.close()
+            self.assertRaisesRegex(SystemExit, "drop the URL", run, "crawl", srv.url, "--resume", "--db", db)
+            code, out = run("crawl", "--resume", "--db", db)
+            self.assertEqual(code, 0)
+            self.assertRegex(out, r"^run 1: done=9 failed=0 skipped=1 unvisited=0 items=3 ")  # recipe reloaded
+            store = Store(db)
+            saved = json.loads(store.run(1)["config"])
+            store.close()
+        self.assertEqual(saved["domain_delays"], {"example.org": 2.0})
+        self.assertEqual(srv.paths().count("/"), 1)  # seed not refetched
 
     def test_paginated_listing_recipe(self):
         recipe = Path(RECIPE).with_name("fixture_list.json")
