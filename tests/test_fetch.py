@@ -1,12 +1,13 @@
 import base64
 import os
+import threading
 import time
 import unittest
 import urllib.error
 from email.utils import formatdate
 from unittest import mock
 
-from scrapekit.fetch import Fetcher, Response, RobotsDisallowed, retry_after
+from scrapekit.fetch import Fetcher, Response, RobotsDisallowed, Stopped, retry_after
 from tests.server import FixtureServer, ProxyServer
 
 
@@ -96,6 +97,30 @@ class TestFetch(unittest.TestCase):
             self.assertGreaterEqual(time.monotonic() - t, 0.4)
         f = Fetcher(domain_delays={"Example.COM": 3}, respect_robots=False)  # by host, any case
         self.assertEqual(f._domain_delay("http://example.com:8080/x"), 3)
+
+    def test_stop_interrupts_rate_limit_and_backoff_waits(self):
+        with FixtureServer() as srv:
+            for f, path in ((Fetcher(delay=30), "about.html"),  # second fetch waits 30 s
+                            (Fetcher(delay=0, retries=5, backoff=30), "flaky")):  # 30 s backoff
+                with self.subTest(path=path):
+                    errors = []
+
+                    def get():
+                        try:
+                            f.fetch(srv.url + path)
+                        except Stopped as e:
+                            errors.append(e)
+                    if path == "about.html":
+                        f.fetch(srv.url + path)
+                    t = threading.Thread(target=get)
+                    t.start()
+                    time.sleep(0.3)
+                    started = time.monotonic()
+                    f.stop()
+                    t.join(5)
+                    self.assertLess(time.monotonic() - started, 1)
+                    self.assertEqual(len(errors), 1)
+            self.assertEqual(srv.paths().count("/about.html"), 1)  # the waiting fetch never ran
 
     def test_robots_5xx_disallows_whole_origin(self):
         for code in (500, 503):

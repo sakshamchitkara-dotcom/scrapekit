@@ -168,9 +168,12 @@ class Crawler:
                     if r.get("not_modified"):
                         r = self._reuse(prev, r)
                     self._record(run_id, url, depth, r, hops)
+        except BaseException:
+            # On Ctrl-C, don't sit out in-flight fetches (and their retries or rate-limit
+            # waits); they stay 'inflight' in the frontier and are queued again by --resume.
+            self.fetcher.stop()
+            raise
         finally:
-            # On Ctrl-C, don't sit out in-flight fetches (and their retries); they stay
-            # 'inflight' in the frontier and are queued again by --resume.
             pool.shutdown(wait=False, cancel_futures=True)
         st.finish_run(run_id)
         return run_id
