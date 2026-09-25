@@ -9,7 +9,7 @@ import urllib.request
 import urllib.robotparser
 from dataclasses import dataclass, field
 from email.message import Message
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from . import __version__
 
@@ -85,6 +85,13 @@ class Fetcher:
                     rp.disallow_all = True  # can't tell: be conservative
                 self._robots[origin] = rp
             return self._robots[origin]
+
+    def sitemap_locations(self, url: str) -> list[str]:
+        """Sitemaps named by robots.txt `Sitemap:` lines, then the conventional /sitemap.xml."""
+        p = urlsplit(url)
+        origin = f"{p.scheme}://{p.netloc}"
+        found = [urljoin(origin + "/", s.strip()) for s in (self.robots(url).site_maps() or [])]
+        return list(dict.fromkeys(found + [origin + "/sitemap.xml"]))
 
     def allowed(self, url: str) -> bool:
         return not self.respect_robots or self.robots(url).can_fetch(self.user_agent, url)

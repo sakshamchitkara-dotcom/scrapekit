@@ -1,10 +1,13 @@
 """Resumable, concurrent, same-domain crawler."""
 from __future__ import annotations
 
+import gzip
 import hashlib
+import io
 import json
 import logging
 import urllib.error
+import xml.etree.ElementTree as ET
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 
@@ -28,12 +31,45 @@ class CrawlConfig:
     retries: int = 3
     respect_robots: bool = True
     recipe_path: str | None = None
+    sitemap: bool = False
 
 
 def content_hash(items: list[dict], text: str) -> tuple[str, str]:
     """Hash what we care about: recipe items if any, else the page's main text."""
     content = json.dumps(items, sort_keys=True, ensure_ascii=False, indent=1) if items else text
     return hashlib.sha256(content.encode()).hexdigest(), content
+
+
+def discover_sitemap(fetcher: Fetcher, seed: str, limit: int, max_sitemaps: int = 20) -> list[str]:
+    """Up to `limit` page URLs from the seed origin's sitemaps.
+
+    Follows sitemap indexes (at most `max_sitemaps` files), accepts gzipped
+    sitemaps, and skips any sitemap that is missing, disallowed or malformed.
+    """
+    todo, seen, urls = fetcher.sitemap_locations(seed), set(), {}
+    while todo and len(seen) < max_sitemaps and len(urls) < limit:
+        sm = todo.pop(0)
+        if sm in seen:
+            continue
+        seen.add(sm)
+        try:
+            resp = fetcher.fetch(sm)
+            body = resp.body
+            if body[:2] == b"\x1f\x8b":
+                body = gzip.GzipFile(fileobj=io.BytesIO(body)).read(50_000_000)
+            root = ET.fromstring(body)
+        except (RobotsDisallowed, urllib.error.URLError, OSError, EOFError, ET.ParseError):
+            continue
+        if resp.status != 200:
+            continue
+        locs = [normalize(e.text.strip(), sm) for e in root.iter()
+                if e.tag.rsplit("}", 1)[-1] == "loc" and e.text]
+        if root.tag.rsplit("}", 1)[-1] == "sitemapindex":
+            todo += [u for u in locs if u]
+        else:
+            urls.update(dict.fromkeys(u for u in locs if u))
+        log.info("sitemap %s: %d locs", sm, len(locs))
+    return list(urls)[:limit]
 
 
 class Crawler:
@@ -91,6 +127,11 @@ class Crawler:
                 raise SystemExit("seed must be an http(s) URL")
             run_id = st.new_run(seed, asdict(self.cfg))
             st.enqueue(run_id, seed, 0)
+            if self.cfg.sitemap:
+                # ponytail: capped at max_pages URLs; sitemap lastmod/priority are ignored.
+                for u in discover_sitemap(self.fetcher, seed, self.cfg.max_pages):
+                    if not self.cfg.same_domain or same_domain(u, seed):
+                        st.enqueue(run_id, u, 0)
             st.commit()
 
         cfg = self.cfg
