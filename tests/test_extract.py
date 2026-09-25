@@ -85,6 +85,18 @@ class TestRecipe(unittest.TestCase):
                           ("free", None)]:
             self.assertEqual(parse_price(raw), want, raw)
 
+    def test_date_parsing(self):
+        from scrapekit.extract import parse_date
+        for raw, want in [("2026-09-25", "2026-09-25"), ("2026-09-25T10:30:00Z", "2026-09-25T10:30:00+00:00"),
+                          ("Fri, 25 Sep 2026 10:30:00 GMT", "2026-09-25T10:30:00+00:00"),
+                          ("25 September 2026", "2026-09-25"), ("Sept 25, 2026", "2026-09-25"),
+                          ("  25 Sep\n 2026 ", "2026-09-25"), ("09/25/2026", None), ("soon", None)]:
+            self.assertEqual(parse_date(raw), want, raw)
+        self.assertEqual(parse_date("09/25/2026", "%m/%d/%Y"), "2026-09-25")
+        rec = Recipe({"fields": {"d": {"selector": "p", "process": [{"regex": r"on (.+)"},
+                                                                      {"date": "%d/%m/%Y"}]}}})
+        self.assertEqual(rec.extract("<p>posted on 03/04/2026</p>", BASE)[0]["d"], "2026-04-03")
+
     def test_invalid(self):
         with self.assertRaises(ValueError):
             Recipe({"fields": {}})
