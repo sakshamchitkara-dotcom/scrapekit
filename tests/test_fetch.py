@@ -1,7 +1,7 @@
 import time
 import unittest
 
-from scrapekit.fetch import Fetcher, RobotsDisallowed
+from scrapekit.fetch import Fetcher, Response, RobotsDisallowed
 from tests.server import FixtureServer
 
 
@@ -81,6 +81,18 @@ class TestFetch(unittest.TestCase):
             self.assertEqual((nm.status, nm.body), (304, b""))
             srv.mutable = "<html><title>v2</title></html>"
             self.assertEqual(f.fetch(srv.url + "mutable", etag=etag).status, 200)
+
+    def test_charset_from_header_then_meta(self):
+        def text(ctype, body):
+            return Response("u", "u", 200, {"content-type": ctype}, body).text
+        latin = "<meta charset='ISO-8859-1'><p>café</p>".encode("latin-1")
+        self.assertIn("café", text("text/html", latin))
+        http_equiv = ('<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
+                      "<p>€5</p>").encode("cp1252")
+        self.assertIn("€5", text("text/html", http_equiv))
+        self.assertIn("café", text("text/html; charset=latin-1", "<p>café</p>".encode("latin-1")))
+        self.assertIn("café", text("text/html", "<p>café</p>".encode()))  # default utf-8
+        self.assertIn("caf", text("text/html", b"<meta charset=bogus><p>caf\xc3\xa9</p>"))
 
     def test_unreachable_host_disallowed_conservatively(self):
         f = Fetcher(delay=0, retries=0, timeout=1)
