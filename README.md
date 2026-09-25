@@ -67,6 +67,12 @@ scrapekit lint recipes/books_listing.json --url https://books.toscrape.com/
 # Status codes, bytes and timings of the latest run (or --run N, --json)
 scrapekit stats
 
+# Every run in the database, to pick ids for diff/export/stats --run
+scrapekit runs
+
+# Log lines as JSON objects (one per page with -v), e.g. for jq
+scrapekit -v --log-json crawl https://example.com/ 2> crawl.log.jsonl
+
 # One page: generic extraction (title/meta/links/json_ld/main_text) or a recipe
 scrapekit extract https://example.com/
 scrapekit extract https://books.toscrape.com/catalogue/sharp-objects_997/index.html \
@@ -89,7 +95,7 @@ higher), `--domain-delay HOST=SECONDS` (repeatable, matched on `host:port` then 
 `--retries` (3), `--user-agent`, `--proxy`, `--all-domains`, `--sitemap`,
 `--no-conditional` (always download in full), `--db`. `--resume` reuses the saved
 options, except `--proxy`, which is never saved (it may hold a password), so pass it
-again.
+again. Ctrl-C stops a crawl and prints the `--resume` command (exit status 130).
 
 ### Docker
 
@@ -351,6 +357,44 @@ Second half. This sentence is long enough to count as real article prose, not pa
 ```
 
 On the books.toscrape.com product page, which isn't split, the result is the same as in 0.2.0.
+
+### Runs, JSON logs and Ctrl-C (0.4.0)
+
+On the fixture site (`python -m http.server 8811 --directory tests/site`). A crawl
+interrupted with SIGINT after 2.5 s, then resumed:
+
+```
+$ scrapekit -v crawl http://127.0.0.1:8811/ --db i.db --delay 1 --max-depth 1 --recipe recipes/fixture.json
+03:15:23 304 http://127.0.0.1:8811/ items=0
+03:15:23 skipped http://127.0.0.1:8811/private/secret.html (robots.txt)
+03:15:24 304 http://127.0.0.1:8811/about.html items=0
+03:15:25 304 http://127.0.0.1:8811/products/1.html items=1
+^C
+interrupted; continue with: scrapekit crawl --resume --db i.db
+$ echo $?
+130
+$ scrapekit -v crawl --resume --db i.db
+03:15:28 resuming run 2 (3 queued)
+03:15:28 304 http://127.0.0.1:8811/index.html?a=1&b=2 items=0
+03:15:29 304 http://127.0.0.1:8811/products/3.html items=1
+03:15:30 304 http://127.0.0.1:8811/products/2.html items=1
+run 2: done=6 failed=0 skipped=1 unvisited=0 items=3 db=i.db
+  http 304=6 | 0 B | p50 0.7 ms, p95 0.8 ms, max 0.9 ms | 7.1 s
+
+$ scrapekit runs --db i.db
+   1  2026-09-25 03:15:12       5.0 s  pages=6     items=3      http://127.0.0.1:8811/
+   2  2026-09-25 03:15:23       7.1 s  pages=6     items=3      http://127.0.0.1:8811/
+```
+
+0.3.0 printed a `KeyboardInterrupt` traceback here. Exiting still waits for worker
+threads that are sleeping out the per-domain delay (2.6 s in this run).
+
+```
+$ scrapekit -v --log-json crawl http://127.0.0.1:8811/ --db jl.db --delay 0.2 --max-depth 1 \
+      --recipe recipes/fixture.json 2>&1 | head -2
+{"ts": 1790331431.388, "level": "info", "msg": "200 http://127.0.0.1:8811/ items=0", "run": 1, "url": "http://127.0.0.1:8811/", "state": "done", "status": 200, "items": 0, "ms": 0.8}
+{"ts": 1790331431.389, "level": "info", "msg": "skipped http://127.0.0.1:8811/private/secret.html (robots.txt)", "run": 1, "url": "http://127.0.0.1:8811/private/secret.html", "state": "skipped", "note": "robots.txt"}
+```
 
 The Docker image, crawling three catalogue pages into a mounted volume:
 
