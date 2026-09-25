@@ -40,7 +40,12 @@ CREATE TABLE IF NOT EXISTS items (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS items_run ON items(run_id);
+CREATE INDEX IF NOT EXISTS pages_url ON pages(url, run_id);
 """
+# Columns added after 0.1.0; created on open so older databases keep working.
+ADDED_COLUMNS = {
+    "pages": {"etag": "TEXT", "last_modified": "TEXT", "links": "TEXT", "recipe_fp": "TEXT"},
+}
 
 
 class Store:
@@ -49,6 +54,12 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        for table, cols in ADDED_COLUMNS.items():
+            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols.items():
+                if col not in have:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.db.commit()
 
     def close(self):
         self.db.close()
@@ -105,9 +116,14 @@ class Store:
 
     # --------------------------------------------------------------- pages
     def save_page(self, run_id: int, url: str, status: int, title: str | None,
-                  hash_: str | None, content: str | None, items: list[dict], recipe: str | None):
-        self.db.execute("INSERT OR REPLACE INTO pages VALUES (?,?,?,?,?,?,?)",
-                        (run_id, url, status, time.time(), title, hash_, content))
+                  hash_: str | None, content: str | None, items: list[dict], recipe: str | None,
+                  etag: str | None = None, last_modified: str | None = None,
+                  links: dict | None = None, recipe_fp: str | None = None):
+        self.db.execute(
+            "INSERT OR REPLACE INTO pages(run_id, url, status, fetched_at, title, hash, content,"
+            " etag, last_modified, links, recipe_fp) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, url, status, time.time(), title, hash_, content, etag, last_modified,
+             json.dumps(links) if links is not None else None, recipe_fp))
         self.db.execute("DELETE FROM items WHERE run_id=? AND url=?", (run_id, url))
         self.db.executemany("INSERT INTO items VALUES (?,?,?,?)",
                             [(run_id, url, recipe, json.dumps(i, ensure_ascii=False)) for i in items])
@@ -118,6 +134,17 @@ class Store:
     def pages(self, run_id: int) -> dict[str, sqlite3.Row]:
         return {r["url"]: r for r in self.db.execute(
             "SELECT * FROM pages WHERE run_id=? AND hash IS NOT NULL", (run_id,))}
+
+    def previous_page(self, url: str, before_run: int, recipe_fp: str) -> sqlite3.Row | None:
+        """Latest earlier copy of url made with the same recipe, if it has cache validators."""
+        return self.db.execute(
+            "SELECT * FROM pages WHERE url=? AND run_id<? AND recipe_fp=? AND links IS NOT NULL"
+            " AND hash IS NOT NULL AND (etag IS NOT NULL OR last_modified IS NOT NULL)"
+            " ORDER BY run_id DESC LIMIT 1", (url, before_run, recipe_fp)).fetchone()
+
+    def page_items(self, run_id: int, url: str) -> list[dict]:
+        return [json.loads(r[0]) for r in self.db.execute(
+            "SELECT data FROM items WHERE run_id=? AND url=? ORDER BY rowid", (run_id, url))]
 
     def items(self, run_id: int) -> list[dict]:
         return [json.loads(r[0]) for r in self.db.execute(
