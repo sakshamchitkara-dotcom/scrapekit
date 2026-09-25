@@ -42,6 +42,14 @@ class TestDom(unittest.TestCase):
         self.assertEqual(self.sel("#main > a"), [])  # a is inside p (auto-closed later)
         self.assertEqual(self.sel("div a"), ["X", "Y"])
 
+    def test_sibling_combinators(self):
+        self.assertEqual(self.sel("li.a + li"), ["two"])
+        self.assertEqual(self.sel("li.a ~ li"), ["two", "three"])
+        self.assertEqual(self.sel("li.b+li"), ["three"])
+        self.assertEqual(self.sel("li + li.a"), [])
+        self.assertEqual(self.sel("ul ~ p > b"), ["bold"])
+        self.assertEqual(self.sel("#main > ul + p"), ["para bold after"])
+
     def test_group_commas_are_tokenized(self):
         self.assertEqual(self.sel('a[title="a, b"]'), ["X"])
         self.assertEqual(self.sel("li.b ,li.a"), ["one", "two"])
