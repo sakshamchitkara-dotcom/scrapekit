@@ -138,7 +138,14 @@ def cmd_diff(a) -> int:
     store.close()
     print(json.dumps(d, indent=2) if a.json else format_report(d))
     if a.webhook and has_changes(d):
-        print(f"webhook -> HTTP {post_webhook(a.webhook, d)}", file=sys.stderr)
+        try:
+            status = post_webhook(a.webhook, d)
+        except OSError as e:  # URLError, timeouts, refused connections
+            print(f"webhook failed: {e}", file=sys.stderr)
+            return 2  # the alert didn't go out: louder than "changes found"
+        print(f"webhook {'failed' if status >= 400 else 'sent'}: HTTP {status}", file=sys.stderr)
+        if status >= 400:
+            return 2
     return 1 if a.exit_code and has_changes(d) else 0
 
 
@@ -242,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--old", type=int)
     d.add_argument("--new", type=int)
     d.add_argument("--json", action="store_true")
-    d.add_argument("--webhook", help="POST changes as JSON to this URL")
+    d.add_argument("--webhook", help="POST changes as JSON to this URL (exit 2 if that fails)")
     d.add_argument("--exit-code", action="store_true", help="exit 1 when changes are found")
     d.set_defaults(fn=cmd_diff)
 
