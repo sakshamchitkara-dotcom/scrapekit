@@ -1,0 +1,10 @@
+{
+  "name": "fixture-products",
+  "match": "/products/\\d+\\.html$",
+  "fields": {
+    "name": "h1.name",
+    "price": {"selector": ".price", "regex": "[\\d.]+", "type": "float"},
+    "stock": {"selector": ".stock", "regex": "\\((\\d+) available", "type": "int"},
+    "tags": {"selector": "ul.tags li", "many": true}
+  }
+}
