@@ -5,6 +5,7 @@ Serves tests/site/ plus two dynamic endpoints:
   /mutable    -> body controlled by FixtureServer.mutable (change detection),
                  with an ETag that honors If-None-Match
   /redirect/P -> 302 to /P on this server
+  /away       -> 302 to about.html on "localhost" (a different host name, same server)
 Set FixtureServer.robots_status to make /robots.txt answer with that error code.
 Every request path is recorded in FixtureServer.log.
 """
@@ -30,6 +31,8 @@ class _Handler(SimpleHTTPRequestHandler):
             return
         if self.path.startswith("/redirect/"):
             return self._redirect(self.path[len("/redirect"):])
+        if self.path == "/away":
+            return self._redirect(f"http://localhost:{self.server.server_address[1]}/about.html")
         if self.path == "/flaky":
             with srv.lock:
                 srv.flaky_hits += 1
