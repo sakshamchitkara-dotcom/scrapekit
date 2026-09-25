@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.1 - 2026-09-25
+
+### Fixed
+- Ctrl-C no longer waits out rate-limit delays and retry backoff, and no more pages
+  are fetched after it (`--delay 8`: 30 s to exit before, 0.01 s now).
+- A redirect that lands on a URL already in the frontier no longer fetches or stores
+  the page twice. The target is marked skipped (`duplicate of ...`), or the
+  redirecting URL is when the target was already crawled.
+- When `robots.txt` can't be read, skipped pages and `extract` say why
+  (`robots.txt unreachable: ...`, `robots.txt HTTP 503`) instead of implying the
+  site's rules disallow them.
+
+### Tests
+- HTTPS through a `CONNECT` proxy, with and without Basic proxy authentication
+  (including a wrong password), against a local proxy and a self-signed HTTPS server.
+
 ## 0.4.0 - 2026-09-25
 
 ### Added
