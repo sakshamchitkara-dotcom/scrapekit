@@ -1,3 +1,4 @@
+import gzip
 import os
 import sqlite3
 import tempfile
@@ -6,7 +7,7 @@ import unittest
 from scrapekit.crawler import CrawlConfig, Crawler, discover_sitemap
 from scrapekit.diff import diff_runs
 from scrapekit.extract import Recipe
-from scrapekit.fetch import Fetcher
+from scrapekit.fetch import Fetcher, Response
 from scrapekit.store import Store
 from tests.server import SITE, FixtureServer
 
@@ -57,6 +58,23 @@ class CrawlTest(unittest.TestCase):
             "SELECT url FROM frontier WHERE run_id=? AND state='done'", (run,))}
         self.assertEqual(done, {srv.url, srv.url + "orphan.html", srv.url + "about.html",
                                 srv.url + "products/deep/level3.html"})  # off-site dropped
+
+    def test_gzipped_and_broken_sitemaps(self):
+        urlset = (b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                  b"<url><loc>http://a.test/1</loc></url><url><loc>http://a.test/2</loc></url></urlset>")
+        bodies = {"http://a.test/s.xml.gz": gzip.compress(urlset), "http://a.test/bad.xml": b"<urlset",
+                  "http://a.test/sitemap.xml": b"not found"}
+
+        class FakeFetcher:
+            def sitemap_locations(self, url):
+                return list(bodies)
+
+            def fetch(self, url):
+                return Response(url, url, 404 if url.endswith("sitemap.xml") else 200, {}, bodies[url])
+
+        self.assertEqual(discover_sitemap(FakeFetcher(), "http://a.test/", 10),
+                         ["http://a.test/1", "http://a.test/2"])
+        self.assertEqual(discover_sitemap(FakeFetcher(), "http://a.test/", 1), ["http://a.test/1"])
 
     def test_pagination_keeps_depth_and_honors_limit(self):
         spec = {"item": "li.item", "follow": [],
