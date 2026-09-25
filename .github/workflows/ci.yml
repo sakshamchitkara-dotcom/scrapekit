@@ -13,16 +13,23 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python: ["3.10", "3.11", "3.12", "3.13"]
+        extras: [""]
         include:
           - os: macos-latest
             python: "3.13"
+          - os: ubuntu-latest
+            python: "3.12"
+            extras: "[yaml]"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - name: Install
-        run: pip install -e .
+        run: pip install -e ".${{ matrix.extras }}"
+      - name: Check PyYAML is present for the YAML job
+        if: matrix.extras == '[yaml]'
+        run: python -c "import yaml; print('PyYAML', yaml.__version__)"
       - name: Test (offline, local fixture server)
         run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
       - name: CLI smoke test
