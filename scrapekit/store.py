@@ -45,6 +45,7 @@ CREATE INDEX IF NOT EXISTS pages_url ON pages(url, run_id);
 # Columns added after 0.1.0; created on open so older databases keep working.
 ADDED_COLUMNS = {
     "pages": {"etag": "TEXT", "last_modified": "TEXT", "links": "TEXT", "recipe_fp": "TEXT"},
+    "frontier": {"status": "INTEGER", "bytes": "INTEGER", "elapsed_ms": "REAL"},
 }
 
 
@@ -101,9 +102,11 @@ class Store:
         self.db.commit()
         return [(r["url"], r["depth"]) for r in rows]
 
-    def mark(self, run_id: int, url: str, state: str, note: str | None = None):
-        self.db.execute("UPDATE frontier SET state=?, note=? WHERE run_id=? AND url=?",
-                        (state, note, run_id, url))
+    def mark(self, run_id: int, url: str, state: str, note: str | None = None,
+             status: int | None = None, bytes_: int | None = None, elapsed_ms: float | None = None):
+        self.db.execute("UPDATE frontier SET state=?, note=?, status=?, bytes=?, elapsed_ms=?"
+                        " WHERE run_id=? AND url=?",
+                        (state, note, status, bytes_, elapsed_ms, run_id, url))
 
     def reset_inflight(self, run_id: int):
         self.db.execute("UPDATE frontier SET state='queued' WHERE run_id=? AND state='inflight'",
@@ -113,6 +116,35 @@ class Store:
     def count(self, run_id: int, *states: str) -> int:
         q = f"SELECT COUNT(*) FROM frontier WHERE run_id=? AND state IN ({','.join('?' * len(states))})"
         return self.db.execute(q, (run_id, *states)).fetchone()[0]
+
+    def stats(self, run_id: int) -> dict:
+        """Summary of one run: states, HTTP status codes, bytes and response timings."""
+        run = self.db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if run is None:
+            raise SystemExit(f"no run {run_id}")
+
+        def q(sql):
+            return self.db.execute(sql, (run_id,)).fetchall()
+
+        ms = sorted(r[0] for r in q("SELECT elapsed_ms FROM frontier WHERE run_id=? AND elapsed_ms IS NOT NULL"))
+
+        def pct(f):  # nearest-rank percentile
+            return round(ms[int(f * (len(ms) - 1))], 1) if ms else None
+        return {
+            "run": run_id, "seed": run["seed"],
+            "duration_s": round(run["finished"] - run["started"], 2) if run["finished"] else None,
+            "states": dict(q("SELECT state, COUNT(*) FROM frontier WHERE run_id=? GROUP BY state")),
+            "status_codes": {str(k): v for k, v in q(
+                "SELECT status, COUNT(*) FROM frontier WHERE run_id=? AND status IS NOT NULL"
+                " GROUP BY status ORDER BY status")},
+            "bytes": q("SELECT COALESCE(SUM(bytes), 0) FROM frontier WHERE run_id=?")[0][0],
+            "items": q("SELECT COUNT(*) FROM items WHERE run_id=?")[0][0],
+            "timing_ms": {"count": len(ms), "mean": round(sum(ms) / len(ms), 1) if ms else None,
+                          "p50": pct(0.5), "p95": pct(0.95), "max": pct(1.0)},
+            "slowest": [dict(r) for r in self.db.execute(
+                "SELECT url, status, round(elapsed_ms, 1) AS ms FROM frontier WHERE run_id=?"
+                " AND elapsed_ms IS NOT NULL ORDER BY elapsed_ms DESC LIMIT 5", (run_id,))],
+        }
 
     # --------------------------------------------------------------- pages
     def save_page(self, run_id: int, url: str, status: int, title: str | None,

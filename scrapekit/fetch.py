@@ -24,6 +24,7 @@ class Response:
     status: int
     headers: dict = field(default_factory=dict)
     body: bytes = b""
+    elapsed: float = 0.0  # seconds for the final attempt, excluding rate-limit waits
 
     @property
     def content_type(self) -> str:
@@ -122,15 +123,17 @@ class Fetcher:
             "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
             **(headers or {}),
         })
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 body = r.read(self.max_bytes + 1)[: self.max_bytes]
                 headers = {k.lower(): v for k, v in r.headers.items()}
-                return Response(url, r.geturl(), r.status, headers, body)
+                return Response(url, r.geturl(), r.status, headers, body, time.monotonic() - t0)
         except urllib.error.HTTPError as e:
             with e:
                 headers = {k.lower(): v for k, v in (e.headers or {}).items()}
-                return Response(url, url, e.code, headers, e.read() if e.fp else b"")
+                body = e.read() if e.fp else b""
+                return Response(url, url, e.code, headers, body, time.monotonic() - t0)
 
     def fetch(self, url: str, etag: str | None = None, last_modified: str | None = None) -> Response:
         """GET with robots check, rate limit and exponential-backoff retries.

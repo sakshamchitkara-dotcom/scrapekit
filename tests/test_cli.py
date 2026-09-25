@@ -29,6 +29,7 @@ class TestCli(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("items=3", out)
             self.assertIn("skipped=1", out)  # robots-disallowed page
+            self.assertRegex(out, r"http 200=9 \| [\d.]+ KB \| p50 [\d.]+ ms")
 
             _, out = run("export", "--db", db)
             names = sorted(json.loads(l)["name"] for l in out.splitlines())

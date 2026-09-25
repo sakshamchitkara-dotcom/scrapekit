@@ -34,13 +34,28 @@ def cmd_crawl(a) -> int:
                           sitemap=a.sitemap, conditional=not a.no_conditional)
     recipe = Recipe.load(cfg.recipe_path) if cfg.recipe_path else None
     run = Crawler(store, cfg, recipe).run(a.url, resume=a.resume)
-    counts = dict(store.db.execute(
-        "SELECT state, COUNT(*) FROM frontier WHERE run_id=? GROUP BY state", (run,)).fetchall())
+    st = store.stats(run)
+    counts = st["states"]
     print(f"run {run}: done={counts.get('done', 0)} failed={counts.get('failed', 0)} "
           f"skipped={counts.get('skipped', 0)} unvisited={counts.get('queued', 0)} "
-          f"items={len(store.items(run))} db={a.db}")
+          f"items={st['items']} db={a.db}")
+    print(stats_line(st))
     store.close()
     return 0
+
+
+def _size(n: int) -> str:
+    for unit in ("B", "KB", "MB"):
+        if n < 1024 or unit == "MB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def stats_line(st: dict) -> str:
+    codes = " ".join(f"{k}={v}" for k, v in st["status_codes"].items()) or "none"
+    t = st["timing_ms"]
+    timing = f"p50 {t['p50']} ms, p95 {t['p95']} ms, max {t['max']} ms" if t["count"] else "no timings"
+    return f"  http {codes} | {_size(st['bytes'])} | {timing} | {st['duration_s']} s"
 
 
 def cmd_extract(a) -> int:
