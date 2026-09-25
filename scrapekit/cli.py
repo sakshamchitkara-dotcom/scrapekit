@@ -227,6 +227,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="scrapekit", description=_pkg_doc)
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("-v", "--verbose", action="store_true", help="log each fetched URL")
+    p.add_argument("--log-json", action="store_true",
+                   help="write log lines to stderr as JSON objects (with -v: one per page)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def db(sp):
@@ -302,10 +304,25 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line: ts, level, msg, plus a page's run/url/state/status/... fields."""
+    FIELDS = ("run", "url", "state", "status", "items", "ms", "note")
+
+    def format(self, record):
+        out = {"ts": round(record.created, 3), "level": record.levelname.lower(),
+               "msg": record.getMessage()}
+        out.update({k: getattr(record, k) for k in self.FIELDS if getattr(record, k, None) is not None})
+        return json.dumps(out, ensure_ascii=False)
+
+
 def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING,
-                        format="%(asctime)s %(message)s", datefmt="%H:%M:%S", stream=sys.stderr)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(JsonFormatter() if a.log_json else
+                         logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(logging.INFO if a.verbose else logging.WARNING)
     return a.fn(a)
 
 
