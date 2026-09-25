@@ -3,6 +3,7 @@
 Serves tests/site/ plus two dynamic endpoints:
   /flaky      -> 503 twice, then 200 (exercises retry/backoff)
   /mutable    -> body controlled by FixtureServer.mutable (change detection)
+Set FixtureServer.robots_status to make /robots.txt answer with that error code.
 Every request path is recorded in FixtureServer.log.
 """
 import threading
@@ -21,6 +22,9 @@ class _Handler(SimpleHTTPRequestHandler):
         srv = self.server.fixture
         with srv.lock:
             srv.log.append((self.path, self.headers.get("User-Agent")))
+        if self.path == "/robots.txt" and srv.robots_status:
+            self.send_error(srv.robots_status)
+            return
         if self.path == "/flaky":
             with srv.lock:
                 srv.flaky_hits += 1
@@ -47,6 +51,7 @@ class FixtureServer:
         self.log = []
         self.lock = threading.Lock()
         self.flaky_hits = 0
+        self.robots_status = None
         self.mutable = "<html><title>v1</title><body><p>price 10</p></body></html>"
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Handler, directory=str(SITE)))
         self.httpd.fixture = self
