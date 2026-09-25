@@ -193,3 +193,16 @@ class TestCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInterrupt(unittest.TestCase):
+    def test_ctrl_c_exits_130_with_resume_hint(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(Crawler, "run", side_effect=KeyboardInterrupt):
+            db = os.path.join(tmp, "s.db")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = main(["crawl", "http://127.0.0.1:9/", "--db", db])
+            self.assertEqual(code, 130)
+            self.assertIn(f"scrapekit crawl --resume --db {db}", err.getvalue())
