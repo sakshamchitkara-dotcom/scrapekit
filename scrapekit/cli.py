@@ -31,7 +31,8 @@ def cmd_crawl(a) -> int:
         cfg = CrawlConfig(max_depth=a.max_depth, max_pages=a.max_pages, workers=a.workers,
                           same_domain=not a.all_domains, user_agent=a.user_agent,
                           delay=a.delay, retries=a.retries, recipe_path=a.recipe,
-                          sitemap=a.sitemap, conditional=not a.no_conditional)
+                          sitemap=a.sitemap, conditional=not a.no_conditional,
+                          domain_delays=dict(a.domain_delay or []))
     recipe = Recipe.load(cfg.recipe_path) if cfg.recipe_path else None
     run = Crawler(store, cfg, recipe, proxy=a.proxy).run(a.url, resume=a.resume)
     st = store.stats(run)
@@ -42,6 +43,16 @@ def cmd_crawl(a) -> int:
     print(stats_line(st))
     store.close()
     return 0
+
+
+def host_delay(s: str) -> tuple[str, float]:
+    host, sep, secs = s.rpartition("=")
+    try:
+        if sep and host and float(secs) >= 0:
+            return host.strip().lower(), float(secs)
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError(f"expected HOST=SECONDS, got {s!r}")
 
 
 def _size(n: int) -> str:
@@ -154,6 +165,9 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--max-pages", type=int, default=50)
     c.add_argument("--workers", type=int, default=4)
     c.add_argument("--delay", type=float, default=1.0, help="min seconds between requests per domain")
+    c.add_argument("--domain-delay", type=host_delay, action="append", metavar="HOST=SECONDS",
+                   help="delay for one host instead of --delay (repeatable; robots.txt "
+                        "Crawl-delay still wins if higher)")
     c.add_argument("--retries", type=int, default=3)
     c.add_argument("--user-agent")
     c.add_argument("--all-domains", action="store_true", help="follow links off the seed's domain")

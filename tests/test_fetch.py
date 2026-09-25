@@ -77,6 +77,22 @@ class TestFetch(unittest.TestCase):
                 f.fetch(srv.url)
             self.assertGreaterEqual(time.monotonic() - t, 0.4)
 
+    def test_domain_delay_override(self):
+        with FixtureServer() as srv:
+            port = srv.httpd.server_address[1]
+            f = Fetcher(delay=0, domain_delays={f"127.0.0.1:{port}": 0.2})
+            other = f"http://localhost:{port}/"  # same server, different host: default delay
+            t = time.monotonic()
+            for _ in range(3):
+                f.fetch(other)
+            self.assertLess(time.monotonic() - t, 0.2)
+            t = time.monotonic()
+            for _ in range(3):
+                f.fetch(srv.url)
+            self.assertGreaterEqual(time.monotonic() - t, 0.4)
+        f = Fetcher(domain_delays={"Example.COM": 3}, respect_robots=False)  # by host, any case
+        self.assertEqual(f._domain_delay("http://example.com:8080/x"), 3)
+
     def test_robots_5xx_disallows_whole_origin(self):
         for code in (500, 503):
             with FixtureServer() as srv:

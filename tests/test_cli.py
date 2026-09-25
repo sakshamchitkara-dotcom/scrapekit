@@ -71,6 +71,16 @@ class TestCli(unittest.TestCase):
             with self.subTest(recipe=path.name):
                 self.assertTrue(Recipe.load(path).fields)
 
+    def test_domain_delay_option(self):
+        from scrapekit.cli import build_parser
+        a = build_parser().parse_args(["crawl", "http://x/", "--domain-delay", "Slow.example=2.5",
+                                       "--domain-delay", "127.0.0.1:8000=0"])
+        self.assertEqual(a.domain_delay, [("slow.example", 2.5), ("127.0.0.1:8000", 0.0)])
+        for bad in ("nohost", "=1", "x=-1", "x=soon"):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                build_parser().parse_args(["crawl", "--domain-delay", bad])
+
     def test_proxy(self):
         # .invalid never resolves, so these only succeed if they go through the proxy
         with tempfile.TemporaryDirectory() as tmp, ProxyServer() as proxy:
