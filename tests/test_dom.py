@@ -6,7 +6,7 @@ HTML = """<html><head><title>T &amp; U</title></head><body>
 <div id="main" class="wrap big">
   <ul><li class="a">one<li class="b">two<li>three</ul>
   <p>para <b>bold</b><br>after<p>second
-  <a href="/x" data-k="v1 v2">X</a>
+  <a href="/x" data-k="v1 v2" title="a, b">X</a>
   <section><a href="https://ext/y">Y</a></section>
 </div>
 <script>var s = "<a href='no'>";</script>
@@ -41,6 +41,13 @@ class TestDom(unittest.TestCase):
         self.assertEqual(self.sel("section a, li.a"), ["one", "Y"])  # document order
         self.assertEqual(self.sel("#main > a"), [])  # a is inside p (auto-closed later)
         self.assertEqual(self.sel("div a"), ["X", "Y"])
+
+    def test_group_commas_are_tokenized(self):
+        self.assertEqual(self.sel('a[title="a, b"]'), ["X"])
+        self.assertEqual(self.sel("li.b ,li.a"), ["one", "two"])
+        for bad in ("li,", ",li", "li,,a", "li > > a"):
+            with self.assertRaises(ValueError, msg=bad):
+                self.doc.select(bad)
 
     def test_pseudos(self):
         self.assertEqual(self.sel("li:first-child"), ["one"])
