@@ -56,6 +56,20 @@ class CrawlTest(unittest.TestCase):
         self.assertEqual(done, {srv.url, srv.url + "orphan.html", srv.url + "about.html",
                                 srv.url + "products/deep/level3.html"})  # off-site dropped
 
+    def test_pagination_keeps_depth_and_honors_limit(self):
+        spec = {"item": "li.item", "follow": [],
+                "fields": {"name": ".name", "price": {"selector": ".price", "process": ["price"]}}}
+        for limit, want_pages in ((2, 3), (None, 4)):
+            with self.subTest(limit=limit), FixtureServer() as srv:
+                rec = Recipe({**spec, "paginate": {"selector": "a.next", "max_pages": limit}})
+                cfg = CrawlConfig(delay=0, retries=0, max_depth=0)
+                run = Crawler(self.store, cfg, rec).run(srv.url + "list/page1.html")
+                fetched = [p for p in srv.paths() if p != "/robots.txt"]
+            self.assertEqual(fetched, [f"/list/page{i}.html" for i in range(1, want_pages + 1)])
+            items = self.store.items(run)
+            self.assertEqual(len(items), 2 * want_pages)
+            self.assertEqual(items[1]["price"], 1001.0)  # "€1.001,00"
+
     def test_max_pages(self):
         with FixtureServer() as srv:
             run = self.crawl(srv, max_pages=3, workers=2)

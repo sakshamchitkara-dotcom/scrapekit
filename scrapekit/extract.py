@@ -208,6 +208,12 @@ class Recipe:
         self.item = spec.get("item")
         self.fields = {k: self._field(v) for k, v in spec.get("fields", {}).items()}
         self.follow = spec.get("follow")  # list of selectors; None = all links
+        pg = spec.get("paginate")
+        pg = {"selector": pg} if isinstance(pg, str) else dict(pg or {})
+        if pg and not pg.get("selector"):
+            raise ValueError(f"paginate needs a selector: {spec['paginate']!r}")
+        self.paginate = pg.get("selector")
+        self.max_pagination = pg.get("max_pages")  # None = no limit
         if not self.fields:
             raise ValueError("recipe needs at least one field")
 
@@ -253,8 +259,16 @@ class Recipe:
     def follow_links(self, doc: Node, url: str) -> list[str] | None:
         if self.follow is None:
             return None
+        return self._hrefs(doc, url, self.follow)
+
+    def next_pages(self, doc: Node, url: str) -> list[str]:
+        """Pagination links ("next page"), which the crawler follows without adding depth."""
+        return self._hrefs(doc, url, [self.paginate]) if self.paginate else []
+
+    @staticmethod
+    def _hrefs(doc: Node, url: str, selectors: list[str]) -> list[str]:
         out = []
-        for sel in self.follow:
+        for sel in selectors:
             for a in doc.select(sel):
                 u = normalize(a.get("href", ""), url)
                 if u:
