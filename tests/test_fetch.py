@@ -15,8 +15,9 @@ class TestFetch(unittest.TestCase):
         with FixtureServer() as srv:
             f = Fetcher(user_agent="testbot/1.0", delay=0)
             self.assertEqual(f.fetch(srv.url + "about.html").status, 200)
-            with self.assertRaises(RobotsDisallowed):
+            with self.assertRaises(RobotsDisallowed) as cm:
                 f.fetch(srv.url + "private/secret.html")
+            self.assertEqual(cm.exception.reason, "robots.txt")
             self.assertNotIn("/private/secret.html", srv.paths())
             self.assertEqual(srv.paths().count("/robots.txt"), 1)  # cached
             self.assertTrue(all(ua == "testbot/1.0" for _, ua in srv.log))
@@ -102,8 +103,9 @@ class TestFetch(unittest.TestCase):
                 srv.robots_status = code
                 f = Fetcher(delay=0, retries=0)
                 self.assertFalse(f.allowed(srv.url))
-                with self.assertRaises(RobotsDisallowed):
+                with self.assertRaises(RobotsDisallowed) as cm:
                     f.fetch(srv.url + "about.html")
+                self.assertEqual(cm.exception.reason, f"robots.txt HTTP {code}")
                 self.assertEqual(srv.paths(), ["/robots.txt"])  # nothing else requested
 
     def test_robots_404_allows_all(self):
@@ -173,6 +175,8 @@ class TestHttpsProxy(unittest.TestCase):
     def test_wrong_proxy_auth(self):
         with FixtureServer(tls=True) as srv, ProxyServer(auth="bob:right") as proxy:
             host = proxy.url.split("//")[1]
-            with self.assertRaises(RobotsDisallowed):  # robots.txt unreachable: disallow all
+            with self.assertRaises(RobotsDisallowed) as cm:  # robots.txt unreachable: disallow all
                 self.fetch(srv, f"http://bob:wrong@{host}")
+            self.assertIn("robots.txt unreachable", cm.exception.reason)
+            self.assertIn("407", cm.exception.reason)
             self.assertEqual(srv.paths(), [])

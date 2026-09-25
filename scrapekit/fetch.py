@@ -64,7 +64,12 @@ def retry_after(value: str) -> float | None:
 
 
 class RobotsDisallowed(Exception):
-    pass
+    """url is off limits. reason says why: "robots.txt" (the rules disallow it) or why
+    robots.txt couldn't be read, since that blocks the whole origin."""
+
+    def __init__(self, url: str, reason: str = "robots.txt"):
+        super().__init__(url)
+        self.url, self.reason = url, reason
 
 
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
@@ -76,7 +81,7 @@ class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not self.fetcher.allowed(newurl):
             fp.close()
-            raise RobotsDisallowed(newurl)
+            raise RobotsDisallowed(newurl, self.fetcher.robots_problem(newurl))
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -94,6 +99,7 @@ class Fetcher:
         self.max_bytes = max_bytes
         self.respect_robots = respect_robots
         self._robots: dict[str, urllib.robotparser.RobotFileParser] = {}
+        self._robots_errors: dict[str, str] = {}  # origin -> why robots.txt blocks everything
         self._next_slot: dict[str, float] = {}
         self._lock = threading.Lock()
         self._robots_locks: dict[str, threading.Lock] = {}
@@ -116,12 +122,14 @@ class Fetcher:
                     r = self._request(origin + "/robots.txt")
                     if r.status in (401, 403) or r.status >= 500:
                         rp.disallow_all = True  # forbidden or unknown: be conservative
+                        self._robots_errors[origin] = f"robots.txt HTTP {r.status}"
                     elif r.status >= 400:
                         rp.allow_all = True
                     else:
                         rp.parse(r.text.splitlines())
-                except (urllib.error.URLError, OSError):
+                except (urllib.error.URLError, OSError) as e:
                     rp.disallow_all = True  # can't tell: be conservative
+                    self._robots_errors[origin] = f"robots.txt unreachable: {getattr(e, 'reason', e)}"
                 self._robots[origin] = rp
             return self._robots[origin]
 
@@ -131,6 +139,11 @@ class Fetcher:
         origin = f"{p.scheme}://{p.netloc}"
         found = [urljoin(origin + "/", s.strip()) for s in (self.robots(url).site_maps() or [])]
         return list(dict.fromkeys(found + [origin + "/sitemap.xml"]))
+
+    def robots_problem(self, url: str) -> str:
+        """Why url is disallowed: robots.txt's rules, or why robots.txt couldn't be read."""
+        p = urlsplit(url)
+        return self._robots_errors.get(f"{p.scheme}://{p.netloc}", "robots.txt")
 
     def allowed(self, url: str) -> bool:
         return not self.respect_robots or self.robots(url).can_fetch(self.user_agent, url)
@@ -185,7 +198,7 @@ class Fetcher:
         Returns non-retryable HTTP errors (e.g. 404) as a Response.
         """
         if not self.allowed(url):
-            raise RobotsDisallowed(url)
+            raise RobotsDisallowed(url, self.robots_problem(url))
         cond = {}
         if etag:
             cond["If-None-Match"] = etag

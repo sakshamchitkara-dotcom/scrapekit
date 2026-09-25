@@ -471,7 +471,7 @@ scrapekit is polite by default, but you are still responsible for how you use it
 - Worker threads only fetch and parse. The main thread owns the single SQLite
   connection, which avoids cross-thread locking and keeps every commit atomic per page.
 - If `robots.txt` can't be fetched (network error or 5xx), all URLs on that origin are
-  disallowed. A 404 allows everything, and 401/403 disallows everything, matching
+  disallowed, and their note says why (`robots.txt unreachable: ...`, `robots.txt HTTP 503`). A 404 allows everything, and 401/403 disallows everything, matching
   `urllib.robotparser`.
 - The main-text heuristic scores blocks by paragraph text and link density, then
   merges the best block's siblings that score at least 20% as well (plus loose
