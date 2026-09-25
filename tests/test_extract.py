@@ -27,6 +27,24 @@ class TestGeneric(unittest.TestCase):
         self.assertIn("polite crawlers", r["main_text"])
         self.assertNotIn("Copyright", r["main_text"])
 
+    def test_main_text_merges_split_article(self):
+        para = "This sentence is long enough to count as real article prose, not chrome. "
+        html = f"""<body><nav><a href="/">Home</a> <a href="/x">Shop</a></nav>
+          <div id="story">
+            <div class="part"><h2>Part one</h2><p>{para * 3}</p><p>{para * 2}</p></div>
+            <div class="promo"><a href="/buy">Buy now</a><p>Sale!</p></div>
+            <p>A loose paragraph between the parts. {para}</p>
+            <div class="part"><p>Second half. {para * 3}</p></div>
+          </div>
+          <div class="footer"><p>Copyright 2026. All rights reserved.</p></div></body>"""
+        text = generic(html, BASE)["main_text"]
+        self.assertTrue(text.startswith("Part one"))
+        self.assertIn("A loose paragraph", text)
+        self.assertIn("Second half.", text)
+        self.assertLess(text.index("A loose"), text.index("Second half."))  # document order
+        for chrome in ("Sale!", "Buy now", "Copyright", "Shop"):
+            self.assertNotIn(chrome, text)
+
 
 class TestRecipe(unittest.TestCase):
     def test_item_list(self):

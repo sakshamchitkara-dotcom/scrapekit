@@ -58,32 +58,55 @@ _BLOCKS = ("article", "main", "section", "div", "td", "body")
 _BOILER = re.compile(r"nav|menu|footer|header|sidebar|comment|share|promo|breadcrumb|cookie", re.I)
 
 
+_TEXT = ("p", "pre", "blockquote")
+
+
+def _link_density(n: Node) -> float:
+    return sum(len(a.text()) for a in n.select("a")) / (len(n.text()) or 1)
+
+
 def main_text(doc: Node) -> str:
-    """Readability-style heuristic: pick the block whose own <p> children carry
-    the most text, penalized by link density and boilerplate-ish class/id.
+    """Readability-style heuristic: score blocks by the text of their own <p>
+    children, penalized by link density and boilerplate-ish class/id. The best
+    block is then merged with sibling blocks that score at least a fifth as
+    well, and with loose sibling paragraphs, so an article split by an ad or
+    an image still comes out whole.
     """
-    # ponytail: single-block pick; no sibling merging like full Readability.
+    scores: dict[int, float] = {}
     best, best_score = None, 0.0
     for n in doc.iter():
         if n.tag not in _BLOCKS:
             continue
-        paras = [c.text() for c in n.elements if c.tag in ("p", "pre", "blockquote")]
+        paras = [c.text() for c in n.elements if c.tag in _TEXT]
         text_len = sum(len(p) for p in paras)
         if not text_len:
             continue
-        link_len = sum(len(a.text()) for a in n.select("a"))
-        all_len = len(n.text()) or 1
-        score = text_len * (1 - link_len / all_len) + 25 * len(paras)
+        score = text_len * (1 - _link_density(n)) + 25 * len(paras)
         if n.tag in ("article", "main"):
             score *= 1.5
         if _BOILER.search(n.get("class", "") + " " + n.get("id", "")):
             score *= 0.2
+        scores[id(n)] = score
         if score > best_score:
             best, best_score = n, score
     if best is None:
         body = doc.select_one("body") or doc
         return body.text()
-    return "\n\n".join(c.text() for c in best.elements if c.tag in ("p", "pre", "blockquote", "h1", "h2", "h3"))
+
+    def keep(s: Node) -> bool:
+        if s is best or scores.get(id(s), 0) >= best_score * 0.2:
+            return True
+        return s.tag == "p" and len(s.text()) > 80 and _link_density(s) < 0.25
+
+    out = []
+    for block in (best.parent.elements if best.parent else [best]):
+        if not keep(block):
+            continue
+        if block.tag in _TEXT:
+            out.append(block.text())
+        else:
+            out += [c.text() for c in block.elements if c.tag in _TEXT + ("h1", "h2", "h3")]
+    return "\n\n".join(out)
 
 
 def generic(html: str, url: str) -> dict:
