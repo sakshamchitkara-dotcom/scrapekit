@@ -10,6 +10,7 @@ import urllib.request
 import urllib.robotparser
 from dataclasses import dataclass, field
 from email.message import Message
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 from . import __version__
@@ -48,6 +49,18 @@ class Response:
             return self.body.decode(charset, errors="replace")
         except LookupError:
             return self.body.decode("utf-8", errors="replace")
+
+
+def retry_after(value: str) -> float | None:
+    """Seconds to wait from a Retry-After header: delay-seconds or an HTTP-date."""
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
+    return max(0.0, when.timestamp() - time.time())
 
 
 class RobotsDisallowed(Exception):
@@ -183,8 +196,8 @@ class Fetcher:
             else:
                 if resp.status not in RETRY_STATUS or attempt == self.retries:
                     return resp
-                ra = resp.headers.get("retry-after", "")
-                if ra.isdigit():
-                    wait = max(wait, min(float(ra), 60.0))
+                ra = retry_after(resp.headers.get("retry-after", ""))
+                if ra is not None:
+                    wait = max(wait, min(ra, 60.0))
             time.sleep(wait)
         raise AssertionError("unreachable")

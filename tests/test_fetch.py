@@ -1,7 +1,9 @@
 import time
 import unittest
+import urllib.error
+from email.utils import formatdate
 
-from scrapekit.fetch import Fetcher, Response, RobotsDisallowed
+from scrapekit.fetch import Fetcher, Response, RobotsDisallowed, retry_after
 from tests.server import FixtureServer
 
 
@@ -38,6 +40,28 @@ class TestFetch(unittest.TestCase):
             with self.assertRaises(RobotsDisallowed):
                 f.fetch(srv.url + "redirect/private/secret.html")
             self.assertNotIn("/private/secret.html", srv.paths())
+
+    def test_retry_after_is_honored(self):
+        for kind in ("seconds", "http-date"):
+            with self.subTest(kind), FixtureServer() as srv:
+                srv.retry_after = "1" if kind == "seconds" else formatdate(time.time() + 2, usegmt=True)
+                t = time.monotonic()
+                r = Fetcher(delay=0, retries=2, backoff=0.01).fetch(srv.url + "limited")
+                self.assertEqual(r.status, 200)
+                self.assertEqual(srv.paths().count("/limited"), 2)
+                self.assertGreaterEqual(time.monotonic() - t, 0.9)  # not the 10 ms backoff
+
+    def test_retry_after_parsing(self):
+        self.assertEqual(retry_after("120"), 120.0)
+        self.assertEqual(retry_after("Wed, 21 Oct 2015 07:28:00 GMT"), 0.0)  # in the past
+        self.assertAlmostEqual(retry_after(formatdate(time.time() + 30, usegmt=True)), 30, delta=2)
+        self.assertIsNone(retry_after(""))
+        self.assertIsNone(retry_after("soon"))
+
+    def test_network_error_raised_after_retries(self):
+        f = Fetcher(delay=0, retries=2, backoff=0.01, timeout=1, respect_robots=False)
+        with self.assertRaises(urllib.error.URLError):
+            f.fetch("http://127.0.0.1:9/nothing-listens-here")
 
     def test_404_not_retried(self):
         with FixtureServer() as srv:
