@@ -75,8 +75,8 @@ class Fetcher:
                 rp = urllib.robotparser.RobotFileParser(origin + "/robots.txt")
                 try:
                     r = self._request(origin + "/robots.txt")
-                    if r.status in (401, 403):
-                        rp.disallow_all = True
+                    if r.status in (401, 403) or r.status >= 500:
+                        rp.disallow_all = True  # forbidden or unknown: be conservative
                     elif r.status >= 400:
                         rp.allow_all = True
                     else:
