@@ -2,13 +2,14 @@ import contextlib
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from scrapekit.cli import main
 from scrapekit.extract import Recipe
-from tests.server import FixtureServer
+from tests.server import FixtureServer, ProxyServer
 
 RECIPE = str(Path(__file__).parent.parent / "recipes" / "fixture.json")
 
@@ -69,6 +70,24 @@ class TestCli(unittest.TestCase):
         for path in Path(RECIPE).parent.glob("*.json"):
             with self.subTest(recipe=path.name):
                 self.assertTrue(Recipe.load(path).fields)
+
+    def test_proxy(self):
+        # .invalid never resolves, so these only succeed if they go through the proxy
+        with tempfile.TemporaryDirectory() as tmp, ProxyServer() as proxy:
+            _, out = run("extract", "http://scrapekit.invalid/a.html", "--proxy", proxy.url)
+            self.assertEqual(json.loads(out)["main_text"], "http://scrapekit.invalid/a.html")
+            db = os.path.join(tmp, "p.db")
+            code, out = run("crawl", "http://scrapekit.invalid/", "--db", db, "--delay", "0",
+                            "--max-depth", "0", "--proxy", proxy.url)
+            self.assertEqual(code, 0)
+            self.assertIn("done=1 failed=0", out)
+            with sqlite3.connect(db) as conn:
+                self.assertNotIn("proxy", conn.execute("SELECT config FROM runs").fetchone()[0])
+            conn.close()
+        self.assertEqual(proxy.log, ["http://scrapekit.invalid/robots.txt",
+                                     "http://scrapekit.invalid/a.html",
+                                     "http://scrapekit.invalid/robots.txt",
+                                     "http://scrapekit.invalid/"])
 
     def test_extract(self):
         with FixtureServer() as srv:

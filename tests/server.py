@@ -103,3 +103,42 @@ class FixtureServer:
 
     def paths(self):
         return [p for p, _ in self.log]
+
+
+class _ProxyHandler(SimpleHTTPRequestHandler):
+    """Answers proxied requests (absolute-URI request lines) itself."""
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        with self.server.owner.lock:
+            self.server.owner.log.append(self.path)
+        if self.path.endswith("/robots.txt"):
+            self.send_error(404)
+            return
+        data = f"<html><title>via proxy</title><body><p>{self.path}</p></body></html>".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class ProxyServer:
+    """A fake forward proxy. Records the absolute URLs it was asked for in .log."""
+
+    def __init__(self):
+        self.log = []
+        self.lock = threading.Lock()
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), _ProxyHandler)
+        self.httpd.owner = self
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def __enter__(self):
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(self, *exc):
+        self.httpd.shutdown()
+        self.httpd.server_close()

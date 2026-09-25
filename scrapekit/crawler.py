@@ -75,11 +75,13 @@ def discover_sitemap(fetcher: Fetcher, seed: str, limit: int, max_sitemaps: int 
 
 class Crawler:
     def __init__(self, store: Store, cfg: CrawlConfig, recipe: Recipe | None = None,
-                 fetcher: Fetcher | None = None):
+                 fetcher: Fetcher | None = None, proxy: str | None = None):
         self.store = store
         self.cfg = cfg
         self.recipe = recipe
-        kw = {"delay": cfg.delay, "retries": cfg.retries, "respect_robots": cfg.respect_robots}
+        # proxy is not part of CrawlConfig, so credentials in it never reach the database
+        kw = {"delay": cfg.delay, "retries": cfg.retries, "respect_robots": cfg.respect_robots,
+              "proxy": proxy}
         if cfg.user_agent:
             kw["user_agent"] = cfg.user_agent
         self.fetcher = fetcher or Fetcher(**kw)
