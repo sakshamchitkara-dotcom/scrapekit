@@ -62,11 +62,37 @@ class TestRecipe(unittest.TestCase):
         self.assertEqual(item["tags"], ["tag-a", "tag-3"])
         self.assertEqual(item["sku"], "n/a")
 
+    def test_process_steps(self):
+        rec = Recipe({
+            "item": "li.product",
+            "fields": {
+                "name": {"selector": "a::attr(title)", "process": [{"strip": "RW"}, "strip"]},
+                "price": {"selector": ".price", "process": ["price"]},
+                "cents": {"selector": ".price", "process": [{"regex": r"\.(\d+)"}, "number"]},
+            },
+        })
+        items = rec.extract((SITE / "index.html").read_text(), BASE)
+        self.assertEqual([(i["name"], i["price"], i["cents"]) for i in items],
+                         [("ed Widget", 10.5, 50), ("Blue Gadget", 7.25, 25), ("Green Gizmo", 3.0, 0)])
+
+    def test_number_and_price_parsing(self):
+        from scrapekit.extract import parse_number, parse_price
+        for raw, want in [("1,234.5 pts", 1234.5), ("42 left", 42), ("-3", -3), ("none", None),
+                          ("In stock (22 available)", 22)]:
+            self.assertEqual(parse_number(raw), want, raw)
+        for raw, want in [("£51.77", 51.77), ("1.234,56 €", 1234.56), ("$1,299", 1299.0),
+                          ("12,5 zł", 12.5), ("EUR 1 000,00", 1000.0), ("USD 2.000", 2000.0),
+                          ("free", None)]:
+            self.assertEqual(parse_price(raw), want, raw)
+
     def test_invalid(self):
         with self.assertRaises(ValueError):
             Recipe({"fields": {}})
         with self.assertRaises(ValueError):
             Recipe({"fields": {"x": {"selector": "a", "type": "decimal"}}})
+        for bad in (["nope"], [{"regex": "a", "strip": True}], [{}]):
+            with self.assertRaises(ValueError, msg=bad):
+                Recipe({"fields": {"x": {"selector": "a", "process": bad}}})
 
 
 if __name__ == "__main__":
