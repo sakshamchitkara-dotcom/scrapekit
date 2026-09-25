@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrapekit"
+version = "0.1.0"
+description = "Polite, resumable web crawler with declarative extraction recipes and change detection. Stdlib only."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6"]
+
+[project.scripts]
+scrapekit = "scrapekit.cli:main"
+
+[tool.setuptools]
+packages = ["scrapekit"]
