@@ -81,6 +81,13 @@ class Store:
         self.db.execute("UPDATE runs SET finished=? WHERE id=?", (time.time(), run_id))
         self.db.commit()
 
+    def run(self, run_id: int) -> sqlite3.Row:
+        """The run with this id; exits with a message if there is none."""
+        row = self.db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        if row is None:
+            raise SystemExit(f"no run {run_id}")
+        return row
+
     def runs(self, finished_only=True) -> list[sqlite3.Row]:
         q = "SELECT * FROM runs" + (" WHERE finished IS NOT NULL" if finished_only else "")
         return self.db.execute(q + " ORDER BY id").fetchall()
@@ -121,9 +128,7 @@ class Store:
 
     def stats(self, run_id: int) -> dict:
         """Summary of one run: states, HTTP status codes, bytes and response timings."""
-        run = self.db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-        if run is None:
-            raise SystemExit(f"no run {run_id}")
+        run = self.run(run_id)
 
         def q(sql):
             return self.db.execute(sql, (run_id,)).fetchall()

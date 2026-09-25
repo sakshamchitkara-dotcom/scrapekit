@@ -49,8 +49,10 @@ class TestCli(unittest.TestCase):
             self.assertIn("http 304=9 | 0 B |", out)
             _, out = run("stats", "--db", db, "--run", 1, "--json")
             self.assertEqual(json.loads(out)["status_codes"], {"200": 9})
-            with self.assertRaises(SystemExit):
-                run("stats", "--db", db, "--run", 99)
+            for argv in (("stats", "--run", 99), ("export", "--run", 99), ("diff", "--old", 99),
+                         ("diff", "--old", 1, "--new", 99)):
+                with self.subTest(argv=argv), self.assertRaisesRegex(SystemExit, "no run 99"):
+                    run(*argv, "--db", db)
 
     def test_paginated_listing_recipe(self):
         recipe = Path(RECIPE).with_name("fixture_list.json")
