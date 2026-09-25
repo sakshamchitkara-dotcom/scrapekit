@@ -190,6 +190,7 @@ def _matches(node: Node, steps, i: int) -> bool:
 
 def select(root: Node, selector: str) -> list[Node]:
     """All descendants of root matching selector, in document order."""
+    # ponytail: naive comma split; breaks on commas inside [attr="a,b"]. Tokenize groups if needed.
     groups = [_compile(s) for s in selector.split(",") if s.strip()]
     return [n for n in root.iter()
             if any(_matches(n, steps, len(steps) - 1) for steps in groups)]
