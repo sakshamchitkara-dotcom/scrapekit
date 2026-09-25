@@ -1,0 +1,13 @@
+{
+  "name": "books-listing",
+  "item": "article.product_pod",
+  "fields": {
+    "title": "h3 a::attr(title)",
+    "url": "h3 a::attr(href)",
+    "price": {"selector": "p.price_color", "process": ["price"]},
+    "rating": {"selector": "p.star-rating::attr(class)", "process": [{"regex": "star-rating (\\w+)"}]},
+    "availability": {"selector": "p.instock.availability", "process": ["strip"]}
+  },
+  "follow": [],
+  "paginate": {"selector": "li.next a", "max_pages": 19}
+}
