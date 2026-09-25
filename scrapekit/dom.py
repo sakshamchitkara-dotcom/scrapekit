@@ -137,10 +137,12 @@ def _compile(sel: str):
     pos = 0
     sel = sel.strip()
 
+    # Every compound selector adds at least one predicate (`*` adds match-all),
+    # so empty `preds` at a combinator or group end means nothing was there.
     def end_group():
-        if not preds and not steps:
-            raise ValueError(f"empty selector in group list: {sel!r}")
-        steps.append((comb, preds or [lambda n: True]))
+        if not preds:
+            raise ValueError(f"empty selector or dangling combinator in {sel!r}")
+        steps.append((comb, preds))
         groups.append(list(steps))
         steps.clear()
 
@@ -156,16 +158,13 @@ def _compile(sel: str):
                 end_group()
                 preds, comb = [], " "
                 continue
-            if preds:
-                steps.append((comb, preds))
-                preds = []
-            elif steps:
+            if not preds:
                 raise ValueError(f"dangling combinator in {sel!r}")
-            comb = c
+            steps.append((comb, preds))
+            preds, comb = [], c
         elif g["tag"]:
             t = g["tag"].lower()
-            if t != "*":
-                preds.append(lambda n, t=t: n.tag == t)
+            preds.append((lambda n: True) if t == "*" else (lambda n, t=t: n.tag == t))
         elif g["id"]:
             preds.append(lambda n, v=g["id"]: n.attrs.get("id") == v)
         elif g["cls"]:

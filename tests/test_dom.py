@@ -63,7 +63,10 @@ class TestDom(unittest.TestCase):
     def test_group_commas_are_tokenized(self):
         self.assertEqual(self.sel('a[title="a, b"]'), ["X"])
         self.assertEqual(self.sel("li.b ,li.a"), ["one", "two"])
-        for bad in ("li,", ",li", "li,,a", "li > > a"):
+        self.assertEqual(len(self.doc.select("ul > *")), 3)
+        self.assertEqual(len(self.doc.select("* > li")), 3)
+        for bad in ("li,", ",li", "li,,a", "li > > a", "ul >", "ul > ", "li +", "> li", "li, > a",
+                    "li:not(> a)"):
             with self.assertRaises(ValueError, msg=bad):
                 self.doc.select(bad)
 
