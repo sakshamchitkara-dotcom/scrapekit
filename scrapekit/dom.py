@@ -2,8 +2,9 @@
 
 Supported selectors:
   tag, *, #id, .class, [attr], [attr=v], [attr^=v], [attr$=v], [attr*=v],
-  [attr~=v], :first-child, :last-child, :nth-child(an+b|odd|even), descendant (space),
-  child (>), adjacent sibling (+), general sibling (~), and groups (a, b).
+  [attr~=v], :first-child, :last-child, :nth-child(an+b|odd|even),
+  :not(selector list), descendant (space), child (>), adjacent sibling (+),
+  general sibling (~), and groups (a, b).
 """
 from __future__ import annotations
 
@@ -220,6 +221,9 @@ def _pseudo_pred(name, arg):
         return lambda n: index(n)[0] == 0
     if name == "last-child" and arg is None:
         return lambda n: index(n)[0] == index(n)[1] - 1
+    if name == "not" and arg:
+        groups = _compile(arg)
+        return lambda n: not any(_matches(n, g, len(g) - 1) for g in groups)
     if name == "nth-child" and arg is not None:
         test = _nth(arg)
         return lambda n: test(index(n)[0] + 1)
